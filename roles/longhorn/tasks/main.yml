@@ -1,0 +1,26 @@
+---
+- name: Add Longhorn repo
+  command: helm repo add longhorn https://charts.longhorn.io
+
+- name: Update repos
+  command: helm repo update
+
+- name: Create ns
+  command: kubectl create ns longhorn-system
+  failed_when: false
+
+- name: Ensure data dir on nodes
+  file:
+    path: "{{ longhorn_data_dir }}"
+    state: directory
+    mode: '0755'
+
+- name: Push values
+  copy:
+    src: "{{ playbook_dir }}/files/longhorn-values.yaml"
+    dest: /tmp/longhorn-values.yaml
+
+- name: Install Longhorn
+  command: >
+    helm upgrade --install longhorn longhorn/longhorn
+    --namespace longhorn-system -f /tmp/longhorn-values.yaml

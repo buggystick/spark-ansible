@@ -1,0 +1,13 @@
+---
+- name: Create ConfigMap with proxy code
+  shell: |
+    kubectl -n default create configmap openai-proxy-code --from-file=proxy.py={{ role_path }}/files/proxy.py -o yaml --dry-run=client > /tmp/openai-proxy-cm.yaml
+    kubectl apply -f /tmp/openai-proxy-cm.yaml
+
+- name: Render proxy deployment
+  template:
+    src: proxy-deploy.yaml.j2
+    dest: /tmp/openai-proxy.yaml
+
+- name: Apply proxy
+  shell: kubectl apply -f /tmp/openai-proxy.yaml

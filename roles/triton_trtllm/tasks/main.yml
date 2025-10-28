@@ -1,0 +1,34 @@
+---
+- name: Create default ns
+  command: kubectl create ns default
+  failed_when: false
+
+- name: Create models PVC (Longhorn RWX)
+  shell: |
+    cat > /tmp/triton-models-pvc.yaml <<'YAML'
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: triton-models
+  namespace: default
+spec:
+  accessModes: [ "ReadWriteMany" ]
+  resources: { requests: { storage: 200Gi } }
+  storageClassName: longhorn
+YAML
+    kubectl apply -f /tmp/triton-models-pvc.yaml
+
+- name: Render Triton SS
+  template:
+    src: triton-ss.yaml.j2
+    dest: /tmp/triton-ss.yaml
+
+- name: Render Triton SVC
+  template:
+    src: triton-svc.yaml.j2
+    dest: /tmp/triton-svc.yaml
+
+- name: Apply Triton
+  shell: |
+    kubectl apply -f /tmp/triton-svc.yaml
+    kubectl apply -f /tmp/triton-ss.yaml

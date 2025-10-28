@@ -1,0 +1,96 @@
+---
+- name: Install base deps
+  apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+      - lsb-release
+    state: present
+    update_cache: yes
+
+- name: Install containerd
+  apt:
+    name: containerd
+    state: present
+
+- name: Configure containerd
+  shell: |
+    mkdir -p /etc/containerd
+    containerd config default > /etc/containerd/config.toml
+    sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
+    systemctl enable --now containerd
+
+- name: Disable swap
+  command: swapoff -a
+  when: ansible_swaptotal_mb > 0
+
+- name: Remove swap from fstab
+  replace:
+    path: /etc/fstab
+    regexp: '^([^#].*\sswap\s.*)$'
+    replace: '# \1'
+
+- name: Add Kubernetes repo
+  shell: |
+    curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.30/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+    echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.30/deb/ /" > /etc/apt/sources.list.d/kubernetes.list
+
+- name: Install kubeadm/kubelet/kubectl
+  apt:
+    name: [kubelet, kubeadm, kubectl]
+    state: present
+    update_cache: yes
+
+- name: Enable kubelet
+  systemd:
+    name: kubelet
+    enabled: yes
+
+- name: Init control-plane (primary only)
+  command: kubeadm init --pod-network-cidr=10.244.0.0/16
+  args: { creates: /etc/kubernetes/admin.conf }
+  when: "'primary' in group_names"
+
+- name: Copy kubeconfig (primary only)
+  shell: |
+    mkdir -p /home/{{ ansible_user }}/.kube
+    cp /etc/kubernetes/admin.conf /home/{{ ansible_user }}/.kube/config
+    chown {{ ansible_user }}:{{ ansible_user }} /home/{{ ansible_user }}/.kube/config
+  when: "'primary' in group_names"
+
+- name: Get join cmd (primary only)
+  shell: kubeadm token create --print-join-command
+  register: join_cmd
+  when: "'primary' in group_names"
+
+- name: Save join cmd (primary only)
+  copy:
+    content: "{{ join_cmd.stdout }}"
+    dest: /tmp/kubeadm_join.sh
+    mode: '0755'
+  when: "'primary' in group_names"
+
+- name: Fetch join cmd to controller
+  fetch:
+    src: /tmp/kubeadm_join.sh
+    dest: /tmp/kubeadm_join.sh
+    flat: yes
+  when: "'primary' in group_names"
+
+- name: Distribute join cmd (workers)
+  copy:
+    src: /tmp/kubeadm_join.sh
+    dest: /tmp/kubeadm_join.sh
+    mode: '0755'
+  when: "'workers' in group_names"
+
+- name: Join cluster (workers)
+  command: bash /tmp/kubeadm_join.sh
+  args: { creates: /etc/kubernetes/kubelet.conf }
+  when: "'workers' in group_names"
+
+- name: Install Cilium (primary)
+  command: kubectl apply -f https://raw.githubusercontent.com/cilium/cilium/v1.15.6/install/kubernetes/quick-install.yaml
+  when: "'primary' in group_names"

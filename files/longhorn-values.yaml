@@ -1,0 +1,6 @@
+defaultSettings:
+  defaultDataPath: "{{ longhorn_data_dir }}"
+preUpgradeChecker:
+  jobEnabled: false
+ingress:
+  enabled: false

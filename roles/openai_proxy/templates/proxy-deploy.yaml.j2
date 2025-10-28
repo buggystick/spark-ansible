@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openai-proxy
+  namespace: default
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: openai-proxy } }
+  template:
+    metadata: { labels: { app: openai-proxy } }
+    spec:
+      containers:
+        - name: proxy
+          image: python:3.11-slim
+          args: ["python", "/app/proxy.py"]
+          env:
+            - { name: TRITON_HTTP, value: "http://triton-llm.default.svc.cluster.local:8000" }
+            - { name: ACTIVE_MODEL, value: "" }
+          ports: [ { containerPort: 8000, name: http } ]
+          volumeMounts:
+            - { name: app, mountPath: /app }
+      volumes:
+        - name: app
+          configMap:
+            name: openai-proxy-code
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: openai-proxy
+  namespace: default
+spec:
+  selector: { app: openai-proxy }
+  ports:
+    - { name: http, port: 8000, targetPort: 8000 }
+  type: ClusterIP

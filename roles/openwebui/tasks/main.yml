@@ -1,0 +1,20 @@
+---
+- name: Add Open WebUI repo
+  command: helm repo add open-webui https://helm.openwebui.com
+
+- name: Update repos
+  command: helm repo update
+
+- name: Create namespace
+  command: kubectl create ns openwebui
+  failed_when: false
+
+- name: Push values
+  copy:
+    src: "{{ playbook_dir }}/files/openwebui-values.yaml"
+    dest: /tmp/openwebui-values.yaml
+
+- name: Install Open WebUI
+  command: >
+    helm upgrade --install open-webui open-webui/open-webui
+    --namespace openwebui -f /tmp/openwebui-values.yaml

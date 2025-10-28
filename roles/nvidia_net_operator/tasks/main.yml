@@ -1,0 +1,11 @@
+---
+- name: Add NVIDIA Network Operator
+  command: helm repo add nvidia-network-operator https://mellanox.github.io/network-operator
+
+- name: Update repos
+  command: helm repo update
+
+- name: Install Network Operator
+  command: >
+    helm upgrade --install network-operator nvidia-network-operator/network-operator
+    --namespace network-operator --create-namespace

@@ -1,0 +1,9 @@
+helm_version: v3.15.2
+
+models:
+  - name: qwen235b_fp4
+    hf_id: "nvidia/Qwen3-235B-A22B-FP4"
+  - name: gptoss120b
+    hf_id: "openai/gpt-oss-120b"
+  - name: nemotron12b
+    hf_id: "nvidia/NVIDIA-Nemotron-Nano-12B-v2"

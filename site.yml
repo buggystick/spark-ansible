@@ -1,0 +1,23 @@
+- hosts: all
+  become: yes
+  roles:
+    - k8s
+
+- hosts: primary
+  become: yes
+  roles:
+    - nvidia_gpu_operator
+    - nvidia_net_operator
+    - longhorn
+
+- hosts: primary
+  become: yes
+  roles:
+    - trtllm_build
+
+- hosts: primary
+  become: yes
+  roles:
+    - triton_trtllm
+    - openai_proxy
+    - openwebui

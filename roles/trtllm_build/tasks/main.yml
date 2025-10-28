@@ -1,0 +1,29 @@
+---
+- name: Ensure models dir
+  file:
+    path: "{{ models_dir }}"
+    state: directory
+    mode: '0755'
+
+- name: Write HF token (root cache)
+  shell: |
+    mkdir -p /root/.cache/huggingface
+    printf "%s" "{{ hostvars[inventory_hostname].hf_token | default('') }}" > /root/.cache/huggingface/token
+
+- name: Pull builder image
+  shell: docker pull nvcr.io/nvidia/tensorrt-llm:24.10-py3
+
+- name: Build engines TP=1 PP=2 (world=2)
+  shell: |
+    docker run --rm --gpus all       -e HF_TOKEN={{ hostvars[inventory_hostname].hf_token | default('') }}       -v {{ models_dir }}:/models       -v /root/.cache/huggingface:/root/.cache/huggingface       nvcr.io/nvidia/tensorrt-llm:24.10-py3 bash -lc "        trtllm-build           --hf-model-id {{ item.hf_id }}           --checkpoint /root/.cache/huggingface/hub           --output-dir /models/{{ item.name }}/trtllm           --world-size {{ (tp|int) * (pp|int) }}           --tp-size {{ tp }}           --pp-size {{ pp }}           --gpus-per-node 1           --enable-inflight-batching           --max-input-len 8192           --max-output-len 1024         "
+  loop: "{{ models }}"
+  loop_control: { label: "{{ item.name }}" }
+
+- name: Render config.pbtxt per model
+  template:
+    src: "{{ playbook_dir }}/files/config-templates/config.pbtxt.j2"
+    dest: "{{ models_dir }}/{{ item.name }}/config.pbtxt"
+  vars:
+    model_name: "{{ item.name }}"
+  loop: "{{ models }}"
+  loop_control: { label: "{{ item.name }}" }

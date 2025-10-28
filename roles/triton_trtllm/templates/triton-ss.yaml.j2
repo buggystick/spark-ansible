@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: triton-llm
+  namespace: default
+spec:
+  serviceName: triton-llm
+  replicas: 2
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels: { app: triton-llm }
+  template:
+    metadata:
+      labels: { app: triton-llm }
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector: { matchLabels: { app: triton-llm } }
+              topologyKey: kubernetes.io/hostname
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: triton
+          image: nvcr.io/nvidia/tritonserver:24.10-trtllm-python-py3
+          args:
+            - "--model-repository=/models"
+            - "--model-control-mode=explicit"
+            - "--exit-on-error=false"
+          env:
+            - { name: NCCL_SOCKET_IFNAME, value: "{{ cx7_iface }}" }
+            - { name: NCCL_IB_DISABLE, value: "0" }
+            - { name: UCX_TLS, value: "rc,cuda_copy,gdr_copy,sm" }
+          ports:
+            - { name: http, containerPort: 8000 }
+            - { name: grpc, containerPort: 8001 }
+            - { name: metrics, containerPort: 8002 }
+          volumeMounts:
+            - { name: models, mountPath: /models }
+          resources:
+            limits:
+              nvidia.com/gpu: 1
+      volumes:
+        - name: models
+          persistentVolumeClaim: { claimName: triton-models }

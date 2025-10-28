@@ -1,0 +1,15 @@
+---
+- name: Install Helm
+  shell: curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+  args: { creates: /usr/local/bin/helm }
+
+- name: Add NVIDIA repo
+  command: helm repo add nvidia https://nvidia.github.io/gpu-operator
+
+- name: Update repos
+  command: helm repo update
+
+- name: Install GPU Operator
+  command: >
+    helm upgrade --install gpu-operator nvidia/gpu-operator
+    --namespace nvidia-gpu-operator --create-namespace
