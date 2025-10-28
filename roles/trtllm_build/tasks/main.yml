@@ -7,6 +7,27 @@
   environment: { KUBECONFIG: /etc/kubernetes/admin.conf }
   changed_when: false
 
+- name: Ensure Triton models PVC manifest exists
+  copy:
+    dest: /tmp/triton-models-pvc.yaml
+    mode: '0644'
+    content: |
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: triton-models
+        namespace: default
+      spec:
+        accessModes: [ "ReadWriteMany" ]
+        resources:
+          requests:
+            storage: 200Gi
+        storageClassName: longhorn
+
+- name: Apply Triton models PVC
+  command: kubectl apply -f /tmp/triton-models-pvc.yaml
+  environment: { KUBECONFIG: /etc/kubernetes/admin.conf }
+
 - name: Create/Update Hugging Face token secret (if provided)
   shell: |
     set -e
