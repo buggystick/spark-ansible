@@ -1,0 +1,6 @@
+---
+# Add Galaxy roles/collections here if/when needed.
+# Example:
+# collections:
+#   - name: community.docker
+#     version: '>=3.10.0'
