@@ -1,0 +1,52 @@
+name: codex-review
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  codex:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/pull/${{ github.event.pull_request.number }}/merge
+
+      - name: Prep refs
+        run: |
+          git fetch --no-tags origin                 ${{ github.event.pull_request.base.ref }}                 +refs/pull/${{ github.event.pull_request.number }}/head
+
+      - name: Install deps
+        run: |
+          python3 -m pip install -U pip
+          python3 -m pip install -r requirements.txt
+          sudo apt-get update && sudo apt-get install -y docker.io
+
+      - name: Run Codex review
+        id: codex
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          sandbox: workspace-write
+          safety-strategy: drop-sudo
+          prompt: |
+            Review ONLY the changes in this PR for:
+            - Ansible best practices & idempotence
+            - Molecule coverage
+            - Security (no secrets committed)
+            Propose concrete diffs when making suggestions.
+
+      - name: Comment results
+        if: steps.codex.outputs.final_message != ''
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: `${{ steps.codex.outputs.final_message }}`
+            });

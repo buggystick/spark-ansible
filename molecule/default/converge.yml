@@ -1,0 +1,17 @@
+---
+- name: Converge
+  hosts: all
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Ensure base packages present
+      ansible.builtin.package:
+        name:
+          - ca-certificates
+          - curl
+          - gnupg
+        state: present
+
+    - name: Placeholder task for repo sanity
+      ansible.builtin.debug:
+        msg: "Molecule converge OK"

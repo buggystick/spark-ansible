@@ -1,0 +1,15 @@
+---
+driver:
+  name: docker
+platforms:
+  - name: ubuntu-24
+    image: ubuntu:24.04
+    privileged: true
+    pre_build_image: true
+provisioner:
+  name: ansible
+  log: true
+  playbooks:
+    converge: converge.yml
+verifier:
+  name: ansible

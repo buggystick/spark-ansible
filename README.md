@@ -76,4 +76,17 @@ kubectl get pods -A
 kubectl -n openwebui port-forward svc/open-webui 8080:8080  # UI at http://localhost:8080
 ```
 
+## Quickstart (dev / Codex-friendly)
+```bash
+make setup
+make lint
+make test
+# dry-run
+make check PLAY=site.yml
+```
+
+See `AGENTS.md` for agent “house rules”. CI will run Codex review on PRs if you set `OPENAI_API_KEY` as a repo secret.
+
+
+
 License: MIT

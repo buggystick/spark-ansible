@@ -1,0 +1,5 @@
+[spark]
+# These are real hosts — DO NOT target from Codex or CI.
+# Leave them commented to prevent accidental use.
+# spark-6b57 ansible_host=169.254.187.90
+# spark-7659 ansible_host=169.254.218.88
