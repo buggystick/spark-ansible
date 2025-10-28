@@ -1,0 +1,61 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: trtllm-build-script
+  namespace: default
+data:
+  build.sh: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        echo "TP=${TP:-1} PP=${PP:-1} WORLD=${WORLD:-1}"
+        echo "Models dir: /models"
+        nvidia-smi || true
+
+        python3 - <<'PY'
+        import os, subprocess, sys, json
+
+        models = json.loads(os.environ.get("MODELS_JSON","[]"))
+        TP = int(os.environ.get('TP','1'))
+        PP = int(os.environ.get('PP','1'))
+        WORLD = TP * PP
+
+        def run(cmd):
+            print(">>", cmd, flush=True)
+            r = subprocess.run(cmd, shell=True)
+            if r.returncode != 0:
+                sys.exit(r.returncode)
+
+        for m in models:
+            name = m["name"]
+            hf_id = m["hf_id"]
+            out = "/models/" + name + "/trtllm"
+            os.makedirs(out, exist_ok=True)
+
+            run(
+                "trtllm-build "
+                + "--hf-model-id " + hf_id + " "
+                + "--checkpoint /root/.cache/huggingface/hub "
+                + "--output-dir " + out + " "
+                + "--world-size " + str(WORLD) + " --tp-size " + str(TP) + " --pp-size " + str(PP) + " "
+                + "--gpus-per-node 1 --enable-inflight-batching "
+                + "--max-input-len 8192 --max-output-len 1024"
+            )
+
+            lines = []
+            lines.append('name: "' + name + '"')
+            lines.append('backend: "tensorrtllm"')
+            lines.append('max_batch_size: 32')
+            lines.append('parameters: { key: "tensor_parallel_size" value: { string_value: "' + str(TP) + '" } }')
+            lines.append('parameters: { key: "pipeline_parallel_size" value: { string_value: "' + str(PP) + '" } }')
+            lines.append('instance_group [{ kind: KIND_GPU, count: 1 }]')
+            cfg = "\n".join(lines) + "\n"
+
+            os.makedirs("/models/" + name, exist_ok=True)
+            with open("/models/" + name + "/config.pbtxt", "w") as f:
+                f.write(cfg)
+
+            print("== Built " + name + " -> " + out, flush=True)
+
+        print("All builds done.", flush=True)
+        PY

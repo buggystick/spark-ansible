@@ -1,15 +1,59 @@
 ---
+# roles/nvidia_gpu_operator/tasks/main.yml
+# Idempotent install/upgrade of NVIDIA GPU Operator via Helm, using admin.conf
+
 - name: Install Helm
   shell: curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-  args: { creates: /usr/local/bin/helm }
+  args:
+    creates: /usr/local/bin/helm
+  when: "'primary' in group_names"
 
-- name: Add NVIDIA repo
+- name: Wait for API server (primary only)
+  shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl get --raw=/healthz
+  register: _apiready
+  retries: 30
+  delay: 2
+  until: _apiready.rc == 0
+  changed_when: false
+  when: "'primary' in group_names"
+
+- name: Add NVIDIA Helm repo
   command: helm repo add nvidia https://nvidia.github.io/gpu-operator
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  changed_when: false
+  failed_when: false
+  when: "'primary' in group_names"
 
-- name: Update repos
+- name: Helm repo update
   command: helm repo update
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  changed_when: false
+  when: "'primary' in group_names"
 
-- name: Install GPU Operator
+- name: Install/upgrade GPU Operator
   command: >
     helm upgrade --install gpu-operator nvidia/gpu-operator
     --namespace nvidia-gpu-operator --create-namespace
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  when: "'primary' in group_names"
+
+# Optional health checks (do not fail play if specific resources differ by version)
+- name: Wait for GPU Operator deployment to be ready
+  shell: >
+    KUBECONFIG=/etc/kubernetes/admin.conf
+    kubectl -n nvidia-gpu-operator rollout status deploy/gpu-operator --timeout=5m
+  register: _gpuop_rollout
+  changed_when: false
+  failed_when: false
+  when: "'primary' in group_names"
+
+- name: Wait for NVIDIA device plugin DaemonSet (best-effort)
+  shell: >
+    KUBECONFIG=/etc/kubernetes/admin.conf
+    kubectl -n kube-system rollout status ds/nvidia-device-plugin-daemonset --timeout=5m
+  changed_when: false
+  failed_when: false
+  when: "'primary' in group_names"

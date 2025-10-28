@@ -1,29 +1,59 @@
 ---
-- name: Ensure models dir
-  file:
-    path: "{{ models_dir }}"
-    state: directory
-    mode: '0755'
+# roles/trtllm_build/tasks/main.yml
+# Build TensorRT-LLM engines as a Kubernetes GPU Job (no host Docker required).
 
-- name: Write HF token (root cache)
+- name: Ensure namespace exists (default)
+  command: kubectl get ns default
+  environment: { KUBECONFIG: /etc/kubernetes/admin.conf }
+  changed_when: false
+
+- name: Create/Update Hugging Face token secret (if provided)
   shell: |
-    mkdir -p /root/.cache/huggingface
-    printf "%s" "{{ hostvars[inventory_hostname].hf_token | default('') }}" > /root/.cache/huggingface/token
+    set -e
+    if [ -n "{{ hostvars[inventory_hostname].hf_token | default('') | trim }}" ]; then
+      kubectl -n default delete secret hf-token --ignore-not-found=true
+      kubectl -n default create secret generic hf-token --from-literal=token='{{ hostvars[inventory_hostname].hf_token | default('') }}'
+    fi
+  environment: { KUBECONFIG: /etc/kubernetes/admin.conf }
+  args: { executable: /bin/bash }
+  changed_when: true
 
-- name: Pull builder image
-  shell: docker pull nvcr.io/nvidia/tensorrt-llm:24.10-py3
-
-- name: Build engines TP=1 PP=2 (world=2)
-  shell: |
-    docker run --rm --gpus all       -e HF_TOKEN={{ hostvars[inventory_hostname].hf_token | default('') }}       -v {{ models_dir }}:/models       -v /root/.cache/huggingface:/root/.cache/huggingface       nvcr.io/nvidia/tensorrt-llm:24.10-py3 bash -lc "        trtllm-build           --hf-model-id {{ item.hf_id }}           --checkpoint /root/.cache/huggingface/hub           --output-dir /models/{{ item.name }}/trtllm           --world-size {{ (tp|int) * (pp|int) }}           --tp-size {{ tp }}           --pp-size {{ pp }}           --gpus-per-node 1           --enable-inflight-batching           --max-input-len 8192           --max-output-len 1024         "
-  loop: "{{ models }}"
-  loop_control: { label: "{{ item.name }}" }
-
-- name: Render config.pbtxt per model
+- name: Render builder script ConfigMap
   template:
-    src: "{{ playbook_dir }}/files/config-templates/config.pbtxt.j2"
-    dest: "{{ models_dir }}/{{ item.name }}/config.pbtxt"
-  vars:
-    model_name: "{{ item.name }}"
-  loop: "{{ models }}"
-  loop_control: { label: "{{ item.name }}" }
+    src: script-cm.yaml.j2
+    dest: /tmp/trtllm-build-script-cm.yaml
+
+- name: Apply builder script ConfigMap
+  command: kubectl apply -f /tmp/trtllm-build-script-cm.yaml
+  environment: { KUBECONFIG: /etc/kubernetes/admin.conf }
+
+- name: Render build Job manifest
+  template:
+    src: job.yaml.j2
+    dest: /tmp/trtllm-build-job.yaml
+
+- name: Delete previous Job if exists (to allow rerun)
+  command: kubectl -n default delete job trtllm-build --ignore-not-found=true
+  environment: { KUBECONFIG: /etc/kubernetes/admin.conf }
+  changed_when: false
+
+- name: Create build Job
+  command: kubectl apply -f /tmp/trtllm-build-job.yaml
+  environment: { KUBECONFIG: /etc/kubernetes/admin.conf }
+
+- name: Wait for Job completion (up to 12h for big models)
+  command: kubectl -n default wait --for=condition=complete --timeout=12h job/trtllm-build
+  environment: { KUBECONFIG: /etc/kubernetes/admin.conf }
+  register: _waitjob
+  changed_when: false
+
+- name: Get Job logs (last run)
+  shell: |
+    kubectl -n default logs job/trtllm-build --tail=-1 || true
+  environment: { KUBECONFIG: /etc/kubernetes/admin.conf }
+  register: _joblogs
+  changed_when: false
+
+- name: Show summary (debug)
+  debug:
+    msg: "{{ _joblogs.stdout.splitlines()[-25:] if _joblogs.stdout is defined else [] }}"

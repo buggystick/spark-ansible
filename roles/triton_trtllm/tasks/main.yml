@@ -4,31 +4,36 @@
   failed_when: false
 
 - name: Create models PVC (Longhorn RWX)
-  shell: |
-    cat > /tmp/triton-models-pvc.yaml <<'YAML'
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: triton-models
-  namespace: default
-spec:
-  accessModes: [ "ReadWriteMany" ]
-  resources: { requests: { storage: 200Gi } }
-  storageClassName: longhorn
-YAML
-    kubectl apply -f /tmp/triton-models-pvc.yaml
+  copy:
+    dest: /tmp/triton-models-pvc.yaml
+    mode: '0644'
+    content: |
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: triton-models
+        namespace: default
+      spec:
+        accessModes: [ "ReadWriteMany" ]
+        resources:
+          requests:
+            storage: 200Gi
+        storageClassName: longhorn
 
-- name: Render Triton SS
+- name: Apply models PVC
+  command: kubectl apply -f /tmp/triton-models-pvc.yaml
+
+- name: Render Triton StatefulSet
   template:
     src: triton-ss.yaml.j2
     dest: /tmp/triton-ss.yaml
 
-- name: Render Triton SVC
+- name: Render Triton Service
   template:
     src: triton-svc.yaml.j2
     dest: /tmp/triton-svc.yaml
 
-- name: Apply Triton
+- name: Apply Triton manifests
   shell: |
     kubectl apply -f /tmp/triton-svc.yaml
     kubectl apply -f /tmp/triton-ss.yaml

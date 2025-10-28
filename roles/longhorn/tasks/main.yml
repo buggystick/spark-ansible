@@ -1,26 +1,87 @@
 ---
-- name: Add Longhorn repo
-  command: helm repo add longhorn https://charts.longhorn.io
+# roles/longhorn/tasks/main.yml
+# Idempotent Longhorn install/upgrade using Helm.
+# - Uses KUBECONFIG=/etc/kubernetes/admin.conf for all kubectl/helm calls
+# - Ensures the Longhorn data directory exists on *every* node
+# - Installs/updates Longhorn and waits for readiness
 
-- name: Update repos
-  command: helm repo update
+- name: Install Helm (primary only)
+  shell: curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+  args:
+    creates: /usr/local/bin/helm
+  when: "'primary' in group_names"
 
-- name: Create ns
-  command: kubectl create ns longhorn-system
-  failed_when: false
+- name: Wait for API server (primary only)
+  shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl get --raw=/healthz
+  register: _apiready
+  retries: 30
+  delay: 2
+  until: _apiready.rc == 0
+  changed_when: false
+  when: "'primary' in group_names"
 
-- name: Ensure data dir on nodes
+# Ensure the Longhorn data path exists on *every* node
+- name: Build list of all nodes
+  set_fact:
+    _all_nodes: "{{ (groups['primary'] | default([])) + (groups['workers'] | default([])) }}"
+  run_once: true
+
+- name: Ensure Longhorn data dir exists on every node
   file:
     path: "{{ longhorn_data_dir }}"
     state: directory
     mode: '0755'
+  delegate_to: "{{ item }}"
+  with_items: "{{ _all_nodes }}"
+  run_once: true
+  become: true
 
-- name: Push values
-  copy:
-    src: "{{ playbook_dir }}/files/longhorn-values.yaml"
-    dest: /tmp/longhorn-values.yaml
+# Helm repo + install
+- name: Add Longhorn repo (primary only)
+  command: helm repo add longhorn https://charts.longhorn.io
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  changed_when: false
+  failed_when: false
+  when: "'primary' in group_names"
 
-- name: Install Longhorn
+- name: Update Helm repos (primary only)
+  command: helm repo update
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  changed_when: false
+  when: "'primary' in group_names"
+
+- name: Create namespace (primary only)
+  command: kubectl create ns longhorn-system
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  failed_when: false
+  changed_when: false
+  when: "'primary' in group_names"
+
+- name: Install/upgrade Longhorn (primary only)
   command: >
     helm upgrade --install longhorn longhorn/longhorn
-    --namespace longhorn-system -f /tmp/longhorn-values.yaml
+    --namespace longhorn-system
+    --set defaultSettings.defaultDataPath={{ longhorn_data_dir }}
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  when: "'primary' in group_names"
+
+# Wait for core Longhorn components to be ready
+- name: Wait for longhorn-manager DaemonSet (primary only)
+  shell: >
+    KUBECONFIG=/etc/kubernetes/admin.conf
+    kubectl -n longhorn-system rollout status ds/longhorn-manager --timeout=10m
+  changed_when: false
+  failed_when: false
+  when: "'primary' in group_names"
+
+- name: Wait for longhorn-driver-deployer Deployment (primary only)
+  shell: >
+    KUBECONFIG=/etc/kubernetes/admin.conf
+    kubectl -n longhorn-system rollout status deploy/longhorn-driver-deployer --timeout=10m
+  changed_when: false
+  failed_when: false
+  when: "'primary' in group_names"

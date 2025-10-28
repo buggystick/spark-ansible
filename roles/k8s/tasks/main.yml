@@ -1,5 +1,22 @@
 ---
-- name: Install base deps
+# roles/k8s/tasks/main.yml
+# Idempotent Kubernetes (kubeadm) setup using containerd (CRI enabled)
+# - Enables CRI + SystemdCgroup in containerd
+# - Optional full reset via -e k8s_reset=true
+# - Auto-rescues kubeadm init if it fails
+# - Joins workers only if not already joined
+# - Installs Cilium via Helm using admin.conf
+# Inventory groups expected: [primary], [workers]
+
+# ------- Defaults (override via -e) -------
+- name: Set sensible defaults
+  set_fact:
+    k8s_pod_cidr: "{{ k8s_pod_cidr | default('10.244.0.0/16') }}"
+    k8s_cri_socket: "{{ k8s_cri_socket | default('unix:///run/containerd/containerd.sock') }}"
+    k8s_channel: "{{ k8s_channel | default('v1.30') }}"
+
+# ------- Base OS deps -------
+- name: Install base packages
   apt:
     name:
       - apt-transport-https
@@ -10,36 +27,122 @@
     state: present
     update_cache: yes
 
-- name: Install containerd
+# ------- Containerd + CRI (known-good config) -------
+- name: Install containerd and cri-tools
   apt:
-    name: containerd
+    name:
+      - containerd
+      - cri-tools
     state: present
 
-- name: Configure containerd
+- name: Ensure /etc/containerd exists
+  file:
+    path: /etc/containerd
+    state: directory
+    mode: '0755'
+
+- name: Push known-good containerd config (CRI enabled + SystemdCgroup)
+  copy:
+    dest: /etc/containerd/config.toml
+    mode: '0644'
+    content: |
+      version = 2
+
+      root = "/var/lib/containerd"
+      state = "/run/containerd"
+
+      [grpc]
+
+      [plugins]
+        [plugins."io.containerd.grpc.v1.cri"]
+          sandbox_image = "registry.k8s.io/pause:3.9"
+          [plugins."io.containerd.grpc.v1.cri".containerd]
+            snapshotter = "overlayfs"
+            [plugins."io.containerd.grpc.v1.cri".containerd.runtimes]
+              [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
+                runtime_type = "io.containerd.runc.v2"
+                [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
+                  SystemdCgroup = true
+
+      [debug]
+        level = "info"
+
+- name: Ensure crictl talks to containerd
+  copy:
+    dest: /etc/crictl.yaml
+    mode: '0644'
+    content: |
+      runtime-endpoint: {{ k8s_cri_socket }}
+      image-endpoint:   {{ k8s_cri_socket }}
+      timeout: 10
+      debug: false
+
+- name: Kernel modules for Kubernetes
+  copy:
+    dest: /etc/modules-load.d/k8s.conf
+    content: |
+      br_netfilter
+      overlay
+
+- name: Sysctl for Kubernetes
+  copy:
+    dest: /etc/sysctl.d/99-k8s.conf
+    content: |
+      net.bridge.bridge-nf-call-iptables = 1
+      net.bridge.bridge-nf-call-ip6tables = 1
+      net.ipv4.ip_forward = 1
+
+- name: Load modules & apply sysctl
   shell: |
-    mkdir -p /etc/containerd
-    containerd config default > /etc/containerd/config.toml
-    sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
-    systemctl enable --now containerd
+    modprobe br_netfilter || true
+    modprobe overlay || true
+    sysctl --system
+  changed_when: false
 
-- name: Disable swap
+- name: Restart & enable containerd
+  systemd:
+    name: containerd
+    state: restarted
+    enabled: yes
+
+# ------- Swap off (idempotent) -------
+- name: Disable swap now (if any)
   command: swapoff -a
-  when: ansible_swaptotal_mb > 0
+  when: ansible_swaptotal_mb|default(0) | int > 0
+  changed_when: ansible_swaptotal_mb|default(0) | int > 0
 
-- name: Remove swap from fstab
+- name: Comment swap lines in fstab
   replace:
     path: /etc/fstab
-    regexp: '^([^#].*\sswap\s.*)$'
-    replace: '# \1'
+    regexp: '^([^#].*\\sswap\\s.*)$'
+    replace: '# \\1'
 
-- name: Add Kubernetes repo
+# ------- Kubernetes APT repo + packages -------
+- name: Ensure keyrings directory exists
+  file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: '0755'
+
+- name: Add Kubernetes apt signing key
   shell: |
-    curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.30/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-    echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.30/deb/ /" > /etc/apt/sources.list.d/kubernetes.list
+    curl -fsSL https://pkgs.k8s.io/core:/stable:/{{ k8s_channel }}/deb/Release.key \
+    | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+  args:
+    creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
 
-- name: Install kubeadm/kubelet/kubectl
+- name: Add Kubernetes apt repository
+  copy:
+    dest: /etc/apt/sources.list.d/kubernetes.list
+    content: |
+      deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/{{ k8s_channel }}/deb/ /
+
+- name: Install kubelet, kubeadm, kubectl
   apt:
-    name: [kubelet, kubeadm, kubectl]
+    name:
+      - kubelet
+      - kubeadm
+      - kubectl
     state: present
     update_cache: yes
 
@@ -48,49 +151,139 @@
     name: kubelet
     enabled: yes
 
-- name: Init control-plane (primary only)
-  command: kubeadm init --pod-network-cidr=10.244.0.0/16
-  args: { creates: /etc/kubernetes/admin.conf }
+# ------- Optional global reset (if requested) -------
+- name: Reset Kubernetes (kubeadm) if requested
+  block:
+    - name: kubeadm reset
+      command: kubeadm reset -f
+    - name: Clean CNI config
+      file:
+        path: /etc/cni/net.d
+        state: absent
+    - name: Recreate CNI dir
+      file:
+        path: /etc/cni/net.d
+        state: directory
+        mode: '0755'
+  when: k8s_reset | default(false) | bool
+
+# ------- Control plane (primary) with auto-rescue -------
+- name: Initialize control-plane (primary only) with auto-rescue
+  block:
+    - name: Check if control-plane already initialized
+      stat:
+        path: /etc/kubernetes/admin.conf
+      register: k8s_adminconf
+
+    - name: kubeadm init (only if not initialized)
+      command: >
+        kubeadm init
+        --pod-network-cidr={{ k8s_pod_cidr }}
+        --cri-socket={{ k8s_cri_socket }}
+      when: not k8s_adminconf.stat.exists
+
+  rescue:
+    - name: Force reset control-plane (rescue)
+      command: kubeadm reset -f
+    - name: kubeadm init (retry after reset)
+      command: >
+        kubeadm init
+        --pod-network-cidr={{ k8s_pod_cidr }}
+        --cri-socket={{ k8s_cri_socket }}
   when: "'primary' in group_names"
 
-- name: Copy kubeconfig (primary only)
+- name: Copy kubeconfig to user (primary only)
   shell: |
     mkdir -p /home/{{ ansible_user }}/.kube
     cp /etc/kubernetes/admin.conf /home/{{ ansible_user }}/.kube/config
     chown {{ ansible_user }}:{{ ansible_user }} /home/{{ ansible_user }}/.kube/config
   when: "'primary' in group_names"
 
-- name: Get join cmd (primary only)
-  shell: kubeadm token create --print-join-command
-  register: join_cmd
+# ------- Wait for API before Helm-based installs -------
+- name: Wait for API server to be reachable (primary only)
+  shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl get --raw=/healthz
+  register: _apiready
+  retries: 30
+  delay: 2
+  until: _apiready.rc == 0
+  changed_when: false
   when: "'primary' in group_names"
 
-- name: Save join cmd (primary only)
-  copy:
-    content: "{{ join_cmd.stdout }}"
-    dest: /tmp/kubeadm_join.sh
-    mode: '0755'
+# ------- Generate join command on primary & share to workers -------
+- name: Obtain join command (primary only)
+  command: kubeadm token create --print-join-command --ttl 30m
+  register: _join_cmd_raw
+  changed_when: false
   when: "'primary' in group_names"
 
-- name: Fetch join cmd to controller
-  fetch:
-    src: /tmp/kubeadm_join.sh
-    dest: /tmp/kubeadm_join.sh
-    flat: yes
+- name: Build final join command with CRI socket (primary only)
+  set_fact:
+    k8s_join_cmd_final: "{{ _join_cmd_raw.stdout }} --cri-socket {{ k8s_cri_socket }}"
   when: "'primary' in group_names"
 
-- name: Distribute join cmd (workers)
-  copy:
-    src: /tmp/kubeadm_join.sh
-    dest: /tmp/kubeadm_join.sh
-    mode: '0755'
+- name: Share join command to all hosts
+  set_fact:
+    cluster_join_cmd: "{{ hostvars[groups['primary'][0]].k8s_join_cmd_final | default('') }}"
+  when: groups['primary'] | length > 0
+
+# ------- Workers join idempotently -------
+- name: Check if worker already joined
+  stat:
+    path: /etc/kubernetes/kubelet.conf
+  register: _worker_joined
   when: "'workers' in group_names"
 
-- name: Join cluster (workers)
-  command: bash /tmp/kubeadm_join.sh
-  args: { creates: /etc/kubernetes/kubelet.conf }
-  when: "'workers' in group_names"
+- name: Join worker to cluster (if not joined)
+  command: "{{ cluster_join_cmd }}"
+  when:
+    - "'workers' in group_names"
+    - not _worker_joined.stat.exists
+    - cluster_join_cmd is defined
+    - cluster_join_cmd | length > 0
 
-- name: Install Cilium (primary)
-  command: kubectl apply -f https://raw.githubusercontent.com/cilium/cilium/v1.15.6/install/kubernetes/quick-install.yaml
+# ------- CNI (Cilium via Helm using admin.conf) -------
+- name: Install Helm (primary only)
+  shell: curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+  args:
+    creates: /usr/local/bin/helm
+  when: "'primary' in group_names"
+
+- name: Add Cilium repo (primary only)
+  command: helm repo add cilium https://helm.cilium.io
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  changed_when: false
+  failed_when: false
+  when: "'primary' in group_names"
+
+- name: Update Helm repos (primary only)
+  command: helm repo update
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  changed_when: false
+  when: "'primary' in group_names"
+
+- name: Check if Cilium already installed (primary only)
+  shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n kube-system get ds cilium -o name
+  register: _cilium_check
+  failed_when: false
+  changed_when: false
+  when: "'primary' in group_names"
+
+- name: Install/upgrade Cilium via Helm (primary only)
+  command: >
+    helm upgrade --install cilium cilium/cilium
+    --namespace kube-system
+    --version 1.15.6
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  when:
+    - "'primary' in group_names"
+    - _cilium_check.rc != 0
+
+- name: Wait for Cilium to be ready (primary only)
+  shell: >
+    KUBECONFIG=/etc/kubernetes/admin.conf
+    kubectl -n kube-system rollout status ds/cilium --timeout=5m
+  changed_when: false
   when: "'primary' in group_names"

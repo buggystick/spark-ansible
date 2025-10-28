@@ -1,0 +1,48 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: trtllm-build
+  namespace: default
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels: { app: trtllm-build }
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        nvidia.com/gpu.present: "true"
+      containers:
+        - name: builder
+          image: nvcr.io/nvidia/tensorrt-llm:24.10-py3
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hf-token
+                  key: token
+                  optional: true
+            - name: TP
+              value: "{{ tp | string }}"
+            - name: PP
+              value: "{{ pp | string }}"
+            - name: WORLD
+              value: "{{ (tp|int * pp|int) | string }}"
+            - name: MODELS_JSON
+              value: '{{ models | to_json | replace("\n","") }}'
+          resources:
+            limits:
+              nvidia.com/gpu: 1
+          volumeMounts:
+            - { name: models, mountPath: /models }
+            - { name: script, mountPath: /opt/trtllm, readOnly: true }
+          command: ["/bin/bash","-lc","/opt/trtllm/build.sh"]
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: triton-models
+        - name: script
+          configMap:
+            name: trtllm-build-script
+            defaultMode: 0755
