@@ -16,13 +16,19 @@ jobs:
 
       - name: Prep refs
         run: |
-          git fetch --no-tags origin                 ${{ github.event.pull_request.base.ref }}                 +refs/pull/${{ github.event.pull_request.number }}/head
+          git fetch --no-tags origin ${{ github.event.pull_request.base.ref }} +refs/pull/${{ github.event.pull_request.number }}/head
 
       - name: Install deps
         run: |
           python3 -m pip install -U pip
           python3 -m pip install -r requirements.txt
-          sudo apt-get update && sudo apt-get install -y docker.io
+
+      # Docker is preinstalled on GitHub runners; make sure it’s running
+      - name: Ensure Docker is available
+        run: |
+          docker --version
+          sudo systemctl is-active --quiet docker || sudo service docker start || true
+          docker ps
 
       - name: Run Codex review
         id: codex
