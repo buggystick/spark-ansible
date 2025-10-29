@@ -85,3 +85,20 @@
   changed_when: false
   failed_when: false
   when: "'primary' in group_names"
+
+- name: Render Longhorn StorageClass manifest (primary only)
+  template:
+    src: longhorn-storageclass.yaml.j2
+    dest: /tmp/longhorn-storageclass.yaml
+    mode: '0644'
+  when: "'primary' in group_names"
+  run_once: true
+
+- name: Ensure Longhorn StorageClass exists (primary only)
+  command: kubectl apply -f /tmp/longhorn-storageclass.yaml
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  register: _longhorn_sc_apply
+  changed_when: "'created' in _longhorn_sc_apply.stdout or 'configured' in _longhorn_sc_apply.stdout"
+  when: "'primary' in group_names"
+  run_once: true
