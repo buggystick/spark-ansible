@@ -12,7 +12,11 @@ spec:
       containers:
         - name: proxy
           image: python:3.11-slim
-          args: ["python", "/app/proxy.py"]
+          command: ["/bin/sh", "-c"]
+          args:
+            - >-
+              python -m pip install --no-cache-dir fastapi uvicorn pydantic requests
+              && exec python /app/proxy.py
           env:
             - { name: TRITON_HTTP, value: "http://triton-llm.default.svc.cluster.local:8000" }
             - { name: ACTIVE_MODEL, value: "" }
