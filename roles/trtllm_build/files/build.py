@@ -66,17 +66,42 @@ def main() -> None:
         log("No models specified in MODELS_JSON; nothing to build.")
         return
 
-    log(f"Preparing to build {len(models)} model(s) with TP={tp}, PP={pp}, WORLD={world}.")
+    total_models = len(models)
+    models_to_build = models
+    job_index_raw = os.environ.get("JOB_COMPLETION_INDEX")
+    if job_index_raw is not None:
+        try:
+            job_index = int(job_index_raw)
+        except ValueError:
+            log(
+                f"Invalid JOB_COMPLETION_INDEX={job_index_raw!r}; running serial build for all {total_models} model(s)."
+            )
+        else:
+            if 0 <= job_index < total_models:
+                selected = models[job_index]
+                models_to_build = [selected]
+                log(
+                    "JOB_COMPLETION_INDEX="
+                    f"{job_index}: building model {selected['name']} ({job_index + 1}/{total_models})."
+                )
+            else:
+                log(
+                    f"JOB_COMPLETION_INDEX={job_index} out of range for {total_models} model(s); running serial build."
+                )
 
-    for idx, model in enumerate(models, start=1):
+    log(
+        f"Preparing to build {len(models_to_build)} model(s) with TP={tp}, PP={pp}, WORLD={world}."
+    )
+
+    for idx, model in enumerate(models_to_build, start=1):
         name = model["name"]
         hf_id = model["hf_id"]
         out_dir = Path("/models") / name / "trtllm"
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        log(f"[{idx}/{len(models)}] Resolving checkpoint for {name} ({hf_id})...")
+        log(f"[{idx}/{len(models_to_build)}] Resolving checkpoint for {name} ({hf_id})...")
         checkpoint_dir = resolve_checkpoint(hf_id, name)
-        log(f"[{idx}/{len(models)}] Checkpoint directory: {checkpoint_dir}")
+        log(f"[{idx}/{len(models_to_build)}] Checkpoint directory: {checkpoint_dir}")
 
         cmd = [
             "trtllm-build",

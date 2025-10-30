@@ -5,6 +5,9 @@ metadata:
   namespace: default
 spec:
   backoffLimit: 0
+  completionMode: Indexed
+  completions: {{ models | length }}
+  parallelism: {{ models | length }}
   template:
     metadata:
       labels: { app: trtllm-build }
