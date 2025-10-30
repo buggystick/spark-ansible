@@ -1,12 +1,19 @@
 ---
 - name: Add Open WebUI repo
-  command: helm repo add open-webui https://helm.openwebui.com
+  command: helm repo add open-webui https://helm.openwebui.com --force-update
+  changed_when: false
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
 
 - name: Update repos
   command: helm repo update
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
 
 - name: Create namespace
   command: kubectl create ns openwebui
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
   failed_when: false
 
 - name: Push values
@@ -18,3 +25,5 @@
   command: >
     helm upgrade --install open-webui open-webui/open-webui
     --namespace openwebui -f /tmp/openwebui-values.yaml
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
