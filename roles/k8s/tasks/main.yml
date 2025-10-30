@@ -154,6 +154,28 @@
 # ------- Optional global reset (if requested) -------
 - name: Reset Kubernetes (kubeadm) if requested
   block:
+    - name: Remove residual containers and pods from containerd before reset
+      shell: |
+        set -o errexit
+        removed=0
+        containers=$(crictl ps -aq)
+        if [ -n "$containers" ]; then
+          crictl rm --force $containers
+          removed=1
+        fi
+        pods=$(crictl pods -aq)
+        if [ -n "$pods" ]; then
+          crictl rmp --force $pods
+          removed=1
+        fi
+        if [ "$removed" -eq 1 ]; then
+          echo "Removed residual containerd workload"
+        fi
+      args:
+        executable: /bin/bash
+      register: _k8s_cleanup_containerd
+      changed_when: _k8s_cleanup_containerd.stdout | length > 0
+      failed_when: false
     - name: kubeadm reset
       command: kubeadm reset -f
     - name: Clean CNI config
