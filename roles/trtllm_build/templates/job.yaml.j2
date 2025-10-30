@@ -14,7 +14,7 @@ spec:
         nvidia.com/gpu.present: "true"
       containers:
         - name: builder
-          image: nvcr.io/nvidia/tensorrt-llm:24.10-py3
+          image: nvcr.io/nvidia/tensorrt-llm/release:spark-single-gpu-dev
           imagePullPolicy: IfNotPresent
           env:
             - name: HF_TOKEN

@@ -153,41 +153,111 @@
 
 # ------- Optional global reset (if requested) -------
 - name: Reset Kubernetes (kubeadm) if requested
+  when: k8s_reset | default(false) | bool
   block:
-    - name: Remove residual containers and pods from containerd before reset
+    - name: Stop kubelet (prevent new pods/mounts)
+      systemd:
+        name: kubelet
+        state: stopped
+        enabled: yes
+      failed_when: false
+
+    - name: Force-clean containerd k8s workload (tasks, containers, CRI pods)
       shell: |
-        set -o errexit
-        removed=0
-        containers=$(crictl ps -aq)
-        if [ -n "$containers" ]; then
-          crictl rm --force $containers
-          removed=1
+        set -Eeuo pipefail
+        removed_any=0
+
+        # Kill/delete any running tasks in containerd k8s namespace
+        for id in $(ctr -n k8s.io tasks ls -q 2>/dev/null || true); do
+          ctr -n k8s.io tasks kill -s KILL "$id" 2>/dev/null || true
+          ctr -n k8s.io tasks delete "$id" 2>/dev/null || true
+          removed_any=1
+        done
+
+        # Delete any containers in containerd k8s namespace
+        for id in $(ctr -n k8s.io containers ls -q 2>/dev/null || true); do
+          ctr -n k8s.io containers delete "$id" 2>/dev/null || true
+          removed_any=1
+        done
+
+        # Remove CRI containers/pods if CRI still lists any (safe if none)
+        if crictl ps -aq >/dev/null 2>&1; then
+          conts="$(crictl ps -aq || true)"
+          if [ -n "${conts:-}" ]; then
+            crictl rm --force $conts 2>/dev/null || true
+            removed_any=1
+          fi
         fi
-        pods=$(crictl pods -aq)
-        if [ -n "$pods" ]; then
-          crictl rmp --force $pods
-          removed=1
+        if crictl pods -aq >/dev/null 2>&1; then
+          pods="$(crictl pods -aq || true)"
+          if [ -n "${pods:-}" ]; then
+            crictl rmp --force $pods 2>/dev/null || true
+            removed_any=1
+          fi
         fi
-        if [ "$removed" -eq 1 ]; then
-          echo "Removed residual containerd workload"
+
+        # Lazy-unmount any kubelet mounts
+        mnts="$(mount | awk '/\/var\/lib\/kubelet/ {print $3}' || true)"
+        if [ -n "${mnts:-}" ]; then
+          umount -l ${mnts} 2>/dev/null || true
+          removed_any=1
+        fi
+
+        # Print a marker if anything was removed (used for changed_when)
+        if [ "$removed_any" -eq 1 ]; then
+          echo "CLEANED_CONTAINERD_OR_MOUNTS"
         fi
       args:
         executable: /bin/bash
       register: _k8s_cleanup_containerd
-      changed_when: _k8s_cleanup_containerd.stdout | length > 0
+      changed_when: "'CLEANED_CONTAINERD_OR_MOUNTS' in _k8s_cleanup_containerd.stdout"
       failed_when: false
-    - name: kubeadm reset
-      command: kubeadm reset -f
-    - name: Clean CNI config
+
+    - name: Restart containerd to refresh CRI
+      systemd:
+        name: containerd
+        state: restarted
+        enabled: yes
+      failed_when: false
+
+    - name: kubeadm reset (explicit CRI socket)
+      command: kubeadm reset -f --cri-socket=unix:///run/containerd/containerd.sock
+      register: _reset
+      failed_when: false
+
+    - name: Clean CNI state (safe to remove)
       file:
-        path: /etc/cni/net.d
+        path: "{{ item }}"
         state: absent
+      loop:
+        - /etc/cni/net.d
+        - /var/lib/cni
+        - /var/run/cni
+        - /var/lib/cilium
+
+    # /var/run/cilium can contain protected cgroup files (e.g., io.prio.class).
+    # Try to unmount (if bind-mounted), then best-effort prune contents and remove dir.
+    - name: Clean /var/run/cilium safely
+      shell: |
+        set -Eeuo pipefail
+        if mountpoint -q /var/run/cilium; then
+          umount -l /var/run/cilium || true
+        fi
+        if [ -d /var/run/cilium ]; then
+          # Remove what we can; ignore protected entries
+          find /var/run/cilium -mindepth 1 -exec rm -rf -- {} + 2>/dev/null || true
+          rmdir /var/run/cilium 2>/dev/null || true
+        fi
+      args:
+        executable: /bin/bash
+      changed_when: false
+      failed_when: false
+
     - name: Recreate CNI dir
       file:
         path: /etc/cni/net.d
         state: directory
         mode: '0755'
-  when: k8s_reset | default(false) | bool
 
 # ------- Control plane (primary) with auto-rescue -------
 - name: Initialize control-plane (primary only) with auto-rescue

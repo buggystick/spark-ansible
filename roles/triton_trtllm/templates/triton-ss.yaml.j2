@@ -24,7 +24,7 @@ spec:
           effect: NoSchedule
       containers:
         - name: triton
-          image: nvcr.io/nvidia/tritonserver:24.10-trtllm-python-py3
+          image: nvcr.io/nvidia/tritonserver:25.09-trtllm-python-py3
           args:
             - "--model-repository=/models"
             - "--model-control-mode=explicit"
