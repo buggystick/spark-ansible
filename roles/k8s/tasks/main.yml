@@ -14,6 +14,7 @@
     k8s_pod_cidr: "{{ k8s_pod_cidr | default('10.244.0.0/16') }}"
     k8s_cri_socket: "{{ k8s_cri_socket | default('unix:///run/containerd/containerd.sock') }}"
     k8s_channel: "{{ k8s_channel | default('v1.30') }}"
+    k8s_cilium_chart_version: "{{ k8s_cilium_chart_version | default('1.15.6') }}"
 
 # ------- Base OS deps -------
 - name: Install base packages
@@ -355,10 +356,19 @@
   changed_when: false
   when: "'primary' in group_names"
 
-- name: Check if Cilium already installed (primary only)
-  shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl -n kube-system get ds cilium -o name
-  register: _cilium_check
-  failed_when: false
+- name: Gather current Cilium release info (primary only)
+  command: helm list --namespace kube-system --filter '^cilium$' --output json
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  register: _cilium_release
+  changed_when: false
+  when: "'primary' in group_names"
+
+- name: Parse Cilium release info (primary only)
+  set_fact:
+    _cilium_release_info: >-
+      {{ (_cilium_release.stdout | trim | length > 0)
+          | ternary(_cilium_release.stdout | from_json, []) }}
   changed_when: false
   when: "'primary' in group_names"
 
@@ -366,12 +376,19 @@
   command: >
     helm upgrade --install cilium cilium/cilium
     --namespace kube-system
-    --version 1.15.6
+    --version {{ k8s_cilium_chart_version }}
+    --wait
+    --timeout 10m0s
   environment:
     KUBECONFIG: /etc/kubernetes/admin.conf
-  when:
-    - "'primary' in group_names"
-    - _cilium_check.rc != 0
+  register: _cilium_upgrade
+  when: "'primary' in group_names"
+  changed_when: >-
+    (_cilium_release_info | default([]) | length == 0) or
+    (
+      (_cilium_release_info | default([]) | length > 0) and
+      ((_cilium_release_info[0].chart | default('')) != 'cilium-' ~ k8s_cilium_chart_version)
+    )
 
 - name: Wait for Cilium to be ready (primary only)
   shell: >
