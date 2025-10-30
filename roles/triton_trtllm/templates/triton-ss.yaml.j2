@@ -5,7 +5,8 @@ metadata:
   namespace: default
 spec:
   serviceName: triton-llm
-  replicas: 2
+  # `pp` (pipeline parallelism) controls the number of Triton pods/ranks.
+  replicas: {{ pp | int }}
   podManagementPolicy: Parallel
   selector:
     matchLabels: { app: triton-llm }
