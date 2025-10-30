@@ -2,6 +2,8 @@
 - name: Create default ns
   command: kubectl create ns default
   failed_when: false
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
 
 - name: Create models PVC (Longhorn RWX)
   copy:
@@ -22,6 +24,8 @@
 
 - name: Apply models PVC
   command: kubectl apply -f /tmp/triton-models-pvc.yaml
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
 
 - name: Render Triton StatefulSet
   template:
@@ -37,3 +41,5 @@
   shell: |
     kubectl apply -f /tmp/triton-svc.yaml
     kubectl apply -f /tmp/triton-ss.yaml
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
