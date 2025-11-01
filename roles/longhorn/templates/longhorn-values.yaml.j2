@@ -1,0 +1,12 @@
+defaultSettings:
+  defaultDataPath: "{{ longhorn_data_dir }}"
+preUpgradeChecker:
+  jobEnabled: false
+service:
+  ui:
+    type: "{{ longhorn_ui_service_type }}"
+{% if longhorn_ui_service_type | lower == 'nodeport' %}
+    nodePort: {{ longhorn_ui_node_port }}
+{% endif %}
+ingress:
+  enabled: false

@@ -1,0 +1,10 @@
+---
+# Default variables for the Longhorn role.
+# These can be overridden in inventory or group_vars as needed.
+
+# Expose the Longhorn UI via a NodePort so it is reachable from cluster nodes.
+longhorn_ui_service_type: NodePort
+
+# Default NodePort used for the Longhorn UI Service.
+# Must stay within the Kubernetes NodePort range (30000-32767).
+longhorn_ui_node_port: 30080
