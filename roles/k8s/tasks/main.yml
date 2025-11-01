@@ -348,7 +348,7 @@
     repo_url: https://helm.cilium.io
     state: present
     force_update: true
-  kubeconfig: /etc/kubernetes/admin.conf
+    kubeconfig: /etc/kubernetes/admin.conf
   when: "'primary' in group_names"
 
 - name: Deploy Cilium via Helm (primary only)
@@ -393,7 +393,7 @@
         repo_url: https://traefik.github.io/charts
         state: present
         force_update: true
-      kubeconfig: /etc/kubernetes/admin.conf
+        kubeconfig: /etc/kubernetes/admin.conf
 
     - name: Create Traefik namespace
       kubernetes.core.k8s:
