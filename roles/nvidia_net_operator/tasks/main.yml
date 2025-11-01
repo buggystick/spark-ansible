@@ -41,13 +41,27 @@
     KUBECONFIG: /etc/kubernetes/admin.conf
   when: "'primary' in group_names"
 
+- name: Check if Network Operator deployment exists
+  shell: >
+    KUBECONFIG=/etc/kubernetes/admin.conf
+    kubectl -n network-operator get deploy network-operator -o name
+  register: _netop_deploy
+  changed_when: false
+  failed_when: false
+  when: "'primary' in group_names"
+
 - name: Wait for Network Operator deployment to be ready
   shell: >
     KUBECONFIG=/etc/kubernetes/admin.conf
     kubectl -n network-operator rollout status deploy/network-operator --timeout=5m
   changed_when: false
   failed_when: false
-  when: "'primary' in group_names"
+  when:
+    - "'primary' in group_names"
+    - >
+        _netop_deploy is defined and
+        _netop_deploy.rc == 0 and
+        ((_netop_deploy.stdout | default('')) | length) > 0
 
 # --- Optional: create a minimal NicClusterPolicy to enable RDMA & device plugins ---
 - name: Check if NicClusterPolicy CRD exists
