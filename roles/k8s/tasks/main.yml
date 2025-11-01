@@ -342,60 +342,43 @@
     creates: /usr/local/bin/helm
   when: "'primary' in group_names"
 
-- name: Add Cilium repo (primary only)
-  command: helm repo add cilium https://helm.cilium.io
-  environment:
-    KUBECONFIG: /etc/kubernetes/admin.conf
-  changed_when: false
-  failed_when: false
+- name: Ensure Cilium Helm repository is configured (primary only)
+  kubernetes.core.helm_repository:
+    name: cilium
+    repo_url: https://helm.cilium.io
+    state: present
+    force_update: true
+  kubeconfig: /etc/kubernetes/admin.conf
   when: "'primary' in group_names"
 
-- name: Update Helm repos (primary only)
-  command: helm repo update
-  environment:
-    KUBECONFIG: /etc/kubernetes/admin.conf
-  changed_when: false
+- name: Deploy Cilium via Helm (primary only)
+  kubernetes.core.helm:
+    name: cilium
+    chart_ref: cilium/cilium
+    chart_repo_url: https://helm.cilium.io
+    chart_version: "{{ k8s_cilium_chart_version }}"
+    release_namespace: kube-system
+    create_namespace: false
+    kubeconfig: /etc/kubernetes/admin.conf
+    wait: true
+    timeout: 600
+    state: present
   when: "'primary' in group_names"
 
-- name: Gather current Cilium release info (primary only)
-  command: helm list --namespace kube-system --filter '^cilium$' --output json
-  environment:
-    KUBECONFIG: /etc/kubernetes/admin.conf
-  register: _cilium_release
-  changed_when: false
-  when: "'primary' in group_names"
-
-- name: Parse Cilium release info (primary only)
-  set_fact:
-    _cilium_release_info: >-
-      {{ (_cilium_release.stdout | trim | length > 0)
-          | ternary(_cilium_release.stdout | from_json, []) }}
-  changed_when: false
-  when: "'primary' in group_names"
-
-- name: Install/upgrade Cilium via Helm (primary only)
-  command: >
-    helm upgrade --install cilium cilium/cilium
-    --namespace kube-system
-    --version {{ k8s_cilium_chart_version }}
-    --wait
-    --timeout 10m0s
-  environment:
-    KUBECONFIG: /etc/kubernetes/admin.conf
-  register: _cilium_upgrade
-  when: "'primary' in group_names"
-  changed_when: >-
-    (_cilium_release_info | default([]) | length == 0) or
-    (
-      (_cilium_release_info | default([]) | length > 0) and
-      ((_cilium_release_info[0].chart | default('')) != 'cilium-' ~ k8s_cilium_chart_version)
-    )
-
-- name: Wait for Cilium to be ready (primary only)
-  shell: >
-    KUBECONFIG=/etc/kubernetes/admin.conf
-    kubectl -n kube-system rollout status ds/cilium --timeout=5m
-  changed_when: false
+- name: Wait for Cilium pods to be ready (primary only)
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: kube-system
+    label_selectors:
+      - k8s-app=cilium
+    kubeconfig: /etc/kubernetes/admin.conf
+    wait: true
+    wait_sleep: 10
+    wait_timeout: 300
+    wait_condition:
+      type: Ready
+      status: "True"
   when: "'primary' in group_names"
 
 # ------- Traefik Ingress Controller (primary only) -------
@@ -404,25 +387,21 @@
     - "'primary' in group_names"
     - k8s_install_traefik | default(true) | bool
   block:
-    - name: Add Traefik repo
-      command: helm repo add traefik https://traefik.github.io/charts
-      environment:
-        KUBECONFIG: /etc/kubernetes/admin.conf
-      changed_when: false
-      failed_when: false
-
-    - name: Update Helm repos
-      command: helm repo update
-      environment:
-        KUBECONFIG: /etc/kubernetes/admin.conf
-      changed_when: false
+    - name: Ensure Traefik Helm repository is configured
+      kubernetes.core.helm_repository:
+        name: traefik
+        repo_url: https://traefik.github.io/charts
+        state: present
+        force_update: true
+      kubeconfig: /etc/kubernetes/admin.conf
 
     - name: Create Traefik namespace
-      command: kubectl create ns {{ traefik_namespace }}
-      environment:
-        KUBECONFIG: /etc/kubernetes/admin.conf
-      failed_when: false
-      changed_when: false
+      kubernetes.core.k8s:
+        api_version: v1
+        kind: Namespace
+        name: "{{ traefik_namespace }}"
+        state: present
+        kubeconfig: /etc/kubernetes/admin.conf
 
     - name: Copy Traefik Helm values
       copy:
@@ -430,40 +409,31 @@
         dest: /tmp/traefik-values.yaml
         mode: '0644'
 
-    - name: Gather current Traefik release info
-      command: helm list --namespace {{ traefik_namespace }} --filter '^traefik$' --output json
-      environment:
-        KUBECONFIG: /etc/kubernetes/admin.conf
-      register: _traefik_release
-      changed_when: false
-
-    - name: Parse Traefik release info
-      set_fact:
-        _traefik_release_info: >-
-          {{ (_traefik_release.stdout | trim | length > 0)
-              | ternary(_traefik_release.stdout | from_json, []) }}
-      changed_when: false
-
     - name: Install/upgrade Traefik via Helm
-      command: >
-        helm upgrade --install traefik traefik/traefik
-        --namespace {{ traefik_namespace }}
-        --values /tmp/traefik-values.yaml
-        {% if traefik_chart_version | default('') | length > 0 %}--version {{ traefik_chart_version }}{% endif %}
-        --wait --timeout 10m0s
-      environment:
-        KUBECONFIG: /etc/kubernetes/admin.conf
-      register: _traefik_upgrade
-      changed_when: >-
-        (_traefik_release_info | default([]) | length == 0) or
-        (
-          (traefik_chart_version | default('') | length > 0) and
-          (_traefik_release_info | default([]) | length > 0) and
-          ((_traefik_release_info[0].chart | default('')) != 'traefik-' ~ traefik_chart_version)
-        )
+      kubernetes.core.helm:
+        name: traefik
+        chart_ref: traefik/traefik
+        chart_repo_url: https://traefik.github.io/charts
+        release_namespace: "{{ traefik_namespace }}"
+        create_namespace: false
+        values_files:
+          - /tmp/traefik-values.yaml
+        chart_version: "{{ traefik_chart_version | default(omit) }}"
+        kubeconfig: /etc/kubernetes/admin.conf
+        wait: true
+        timeout: 600
+        state: present
 
     - name: Wait for Traefik deployment to be ready
-      shell: >
-        KUBECONFIG=/etc/kubernetes/admin.conf
-        kubectl -n {{ traefik_namespace }} rollout status deploy/traefik --timeout=5m
-      changed_when: false
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        namespace: "{{ traefik_namespace }}"
+        name: traefik
+        kubeconfig: /etc/kubernetes/admin.conf
+        wait: true
+        wait_sleep: 10
+        wait_timeout: 300
+        wait_condition:
+          type: Available
+          status: "True"
