@@ -41,11 +41,34 @@
   when: "'primary' in group_names"
 
 # Optional health checks (do not fail play if specific resources differ by version)
+- name: Check if GPU Operator deployment exists
+  shell: >
+    KUBECONFIG=/etc/kubernetes/admin.conf
+    kubectl -n nvidia-gpu-operator get deploy gpu-operator -o name
+  register: _gpuop_deploy
+  changed_when: false
+  failed_when: false
+  when: "'primary' in group_names"
+
 - name: Wait for GPU Operator deployment to be ready
   shell: >
     KUBECONFIG=/etc/kubernetes/admin.conf
     kubectl -n nvidia-gpu-operator rollout status deploy/gpu-operator --timeout=5m
   register: _gpuop_rollout
+  changed_when: false
+  failed_when: false
+  when:
+    - "'primary' in group_names"
+    - _gpuop_deploy is defined
+    - _gpuop_deploy.rc == 0
+    - _gpuop_deploy.stdout is defined
+    - _gpuop_deploy.stdout | length > 0
+
+- name: Check if NVIDIA device plugin DaemonSet exists
+  shell: >
+    KUBECONFIG=/etc/kubernetes/admin.conf
+    kubectl -n kube-system get ds nvidia-device-plugin-daemonset -o name
+  register: _gpuop_deviceplugin
   changed_when: false
   failed_when: false
   when: "'primary' in group_names"
@@ -56,4 +79,9 @@
     kubectl -n kube-system rollout status ds/nvidia-device-plugin-daemonset --timeout=5m
   changed_when: false
   failed_when: false
-  when: "'primary' in group_names"
+  when:
+    - "'primary' in group_names"
+    - _gpuop_deviceplugin is defined
+    - _gpuop_deviceplugin.rc == 0
+    - _gpuop_deviceplugin.stdout is defined
+    - _gpuop_deviceplugin.stdout | length > 0
