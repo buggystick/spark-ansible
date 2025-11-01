@@ -10,9 +10,26 @@ from pathlib import Path
 from typing import Iterable
 
 try:
-    from huggingface_hub import snapshot_download
+    from huggingface_hub import snapshot_download  # type: ignore
 except Exception:  # pragma: no cover - dependency optional in container
     snapshot_download = None
+
+
+# HF Transfer relies on the `hf_transfer` binary which in turn requires DNS
+# access to `transfer.xethub.hf.co`.  The build cluster we target cannot
+# resolve that domain, leading to repeated download failures like the
+# following:
+#
+#   Reqwest(reqwest::Error { kind: Request, url: ... transfer.xethub.hf.co ...
+#          error: "failed to lookup address information: Temporary failure in
+#          name resolution" })
+#
+# When the environment variable is unset the hub automatically opts into HF
+# Transfer.  Force-disable it by default so we fall back to the regular
+# HTTPS endpoints that *are* reachable in the cluster.  Operators can re-enable
+# HF Transfer by exporting HF_HUB_DISABLE_HF_TRANSFER=0 before launching the
+# job if their environment supports it.
+os.environ.setdefault("HF_HUB_DISABLE_HF_TRANSFER", "1")
 
 
 def log(message: str) -> None:
