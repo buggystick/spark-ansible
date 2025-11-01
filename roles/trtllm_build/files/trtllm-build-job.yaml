@@ -6,11 +6,12 @@ metadata:
 spec:
   backoffLimit: 0
   completionMode: Indexed
-  completions: {{ models | length }}
-  parallelism: {{ models | length }}
+  completions: 3
+  parallelism: 3
   template:
     metadata:
-      labels: { app: trtllm-build }
+      labels:
+        app: trtllm-build
     spec:
       restartPolicy: Never
       nodeSelector:
@@ -33,20 +34,23 @@ spec:
             - name: NVIDIA_VISIBLE_DEVICES
               value: "all"
             - name: TP
-              value: "{{ tp | string }}"
+              value: "1"
             - name: PP
-              value: "{{ pp | string }}"
+              value: "2"
             - name: WORLD
-              value: "{{ (tp|int * pp|int) | string }}"
+              value: "2"
             - name: MODELS_JSON
-              value: '{{ models | to_json | replace("\n","") }}'
+              value: '[{"name": "qwen235b_fp4", "hf_id": "nvidia/Qwen3-235B-A22B-FP4"}, {"name": "gptoss120b", "hf_id": "openai/gpt-oss-120b"}, {"name": "nemotron12b", "hf_id": "nvidia/NVIDIA-Nemotron-Nano-12B-v2"}]'
           resources:
             limits:
               nvidia.com/gpu: 1
           volumeMounts:
-            - { name: models, mountPath: /models }
-            - { name: script, mountPath: /opt/trtllm, readOnly: true }
-          command: ["/bin/bash","-lc","/opt/trtllm/build.sh"]
+            - name: models
+              mountPath: /models
+            - name: script
+              mountPath: /opt/trtllm
+              readOnly: true
+          command: ["/bin/bash", "-lc", "/opt/trtllm/build.sh"]
       volumes:
         - name: models
           persistentVolumeClaim:

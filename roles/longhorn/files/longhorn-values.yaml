@@ -1,0 +1,15 @@
+defaultSettings:
+  defaultDataPath: "/srv/longhorn"
+preUpgradeChecker:
+  jobEnabled: false
+service:
+  ui:
+    type: "ClusterIP"
+ingress:
+  enabled: true
+  ingressClassName: "traefik"
+  host: "longhorn.local"
+  paths:
+    - path: "/"
+      pathType: "Prefix"
+  tls: []
