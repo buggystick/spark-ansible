@@ -12,6 +12,7 @@ spec:
     metadata:
       labels: { app: trtllm-build }
     spec:
+      runtimeClassName: nvidia
       restartPolicy: Never
       nodeSelector:
         nvidia.com/gpu.present: "true"
