@@ -42,6 +42,8 @@ ansible-playbook -i inventory/hosts.ini site.yml --tags k8s,nvidia_gpu_operator,
 ansible-playbook -i inventory/hosts.ini site.yml --tags trtllm_build
 ```
 
+> **Note:** The playbook now exports `HF_HUB_DISABLE_HF_TRANSFER=1` by default to avoid DNS failures on restricted clusters. Set the variable in your job spec or shell (for example `export HF_HUB_DISABLE_HF_TRANSFER=0`) before running `ansible-playbook` if you need to re-enable Hugging Face Transfer.
+
 This produces, e.g.:
 ```
 /srv/models/qwen235b_fp4/trtllm/engine_rank0.plan
