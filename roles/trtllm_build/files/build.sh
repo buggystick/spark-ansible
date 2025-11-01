@@ -107,5 +107,5 @@ else
   exit 42
 fi
 
-python3 -m pip install tqdm
+python3 -m pip install tqdm tqdm-logging
 python3 /opt/trtllm/build.py "$@"
