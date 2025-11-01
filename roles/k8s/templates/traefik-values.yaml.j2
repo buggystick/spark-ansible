@@ -1,11 +1,15 @@
 ports:
   web:
-    port: 80
+    port: {{ traefik_web_container_port | default(8000) }}
+    expose: true
+    exposedPort: {{ traefik_web_service_port | default(80) }}
 {% if traefik_service_type | lower == 'nodeport' %}
     nodePort: {{ traefik_web_node_port }}
 {% endif %}
   websecure:
-    port: 443
+    port: {{ traefik_websecure_container_port | default(8443) }}
+    expose: true
+    exposedPort: {{ traefik_websecure_service_port | default(443) }}
 {% if traefik_service_type | lower == 'nodeport' %}
     nodePort: {{ traefik_websecure_node_port }}
 {% endif %}
