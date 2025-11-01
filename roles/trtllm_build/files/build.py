@@ -154,7 +154,15 @@ def _env_token() -> Optional[str]:
 
 
 def _hf_cache_root() -> Path:
-    return Path(os.environ.get("HF_HOME", Path.home() / ".cache" / "huggingface"))
+    env_home = os.environ.get("HF_HOME")
+    if env_home:
+        return Path(env_home)
+
+    models_root = Path("/models")
+    if models_root.exists():
+        return models_root / "huggingface"
+
+    return Path.home() / ".cache" / "huggingface"
 
 
 def download_repo_with_progress(repo_id: str, cache_dir: str, token: Optional[str]) -> str:
@@ -243,6 +251,7 @@ def resolve_checkpoint(hf_id: str, model_name: str) -> str:
     """Return a local directory containing the HF checkpoint (with visible progress)."""
     cache_root = _hf_cache_root()
     cache_root.mkdir(parents=True, exist_ok=True)
+    log(f"Using Hugging Face cache at {cache_root}")
     token = _env_token()
 
     # Prefer per-file progress flow if we have huggingface_hub

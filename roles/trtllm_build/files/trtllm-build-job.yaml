@@ -29,6 +29,12 @@ spec:
                   optional: true
             - name: HF_HUB_DISABLE_HF_TRANSFER
               value: "1"
+            - name: HF_HOME
+              value: /models/huggingface
+            - name: HUGGINGFACE_HUB_CACHE
+              value: /models/huggingface/hub
+            - name: TRANSFORMERS_CACHE
+              value: /models/huggingface/hub
             - name: NVIDIA_DRIVER_CAPABILITIES
               value: compute,utility
             - name: NVIDIA_VISIBLE_DEVICES
