@@ -10,6 +10,9 @@ provisioner:
   name: ansible
   log: true
   playbooks:
+    prepare: prepare.yml
     converge: converge.yml
 verifier:
   name: ansible
+  playbooks:
+    verify: verify.yml

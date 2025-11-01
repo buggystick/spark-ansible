@@ -1,0 +1,18 @@
+---
+- name: Prepare
+  hosts: all
+  gather_facts: false
+  become: false
+  tasks:
+    - name: Update apt cache (raw)
+      ansible.builtin.raw: apt-get update -y
+      changed_when: false
+
+    - name: Install python3 and sudo (raw)
+      ansible.builtin.raw: apt-get install -y python3 sudo
+      args:
+        warn: false
+
+    - name: Ensure Python is available for Ansible modules
+      ansible.builtin.raw: python3 --version
+      changed_when: false

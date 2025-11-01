@@ -1,0 +1,17 @@
+---
+- name: Verify
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Gather installed packages
+      ansible.builtin.package_facts:
+        manager: auto
+
+    - name: Verify required base packages are installed
+      ansible.builtin.assert:
+        that:
+          - "'ca-certificates' in ansible_facts.packages"
+          - "'curl' in ansible_facts.packages"
+          - "'gnupg' in ansible_facts.packages"
+        fail_msg: "One or more required base packages are missing"
+        success_msg: "All required base packages are installed"

@@ -4,6 +4,11 @@
   become: true
   gather_facts: true
   tasks:
+    - name: Update apt cache (Debian/Ubuntu)
+      ansible.builtin.apt:
+        update_cache: yes
+      when: ansible_os_family | default('Debian') == 'Debian'
+
     - name: Ensure base packages present
       ansible.builtin.package:
         name:
