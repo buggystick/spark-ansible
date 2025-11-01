@@ -2,9 +2,22 @@
 # Default variables for the Longhorn role.
 # These can be overridden in inventory or group_vars as needed.
 
-# Expose the Longhorn UI via a NodePort so it is reachable from cluster nodes.
-longhorn_ui_service_type: NodePort
+# Expose the Longhorn UI via a Kubernetes Service.
+# Defaults to ClusterIP so that an ingress controller (Traefik) can front it.
+longhorn_ui_service_type: ClusterIP
 
-# Default NodePort used for the Longhorn UI Service.
+# Optional NodePort used for the Longhorn UI Service when service type is NodePort.
 # Must stay within the Kubernetes NodePort range (30000-32767).
 longhorn_ui_node_port: 30080
+
+# Enable the Longhorn Helm chart's built-in ingress resource and point it at Traefik.
+longhorn_ingress_enabled: true
+longhorn_ingress_class_name: traefik
+longhorn_ingress_host: longhorn.local
+longhorn_ingress_path: /
+longhorn_ingress_path_type: Prefix
+longhorn_ingress_annotations: {}
+
+# Disable TLS by default. Provide a secret name to enable HTTPS termination.
+longhorn_ingress_tls_enabled: false
+longhorn_ingress_tls_secret: longhorn-tls
