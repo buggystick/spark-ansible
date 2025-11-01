@@ -12,6 +12,7 @@ spec:
     metadata:
       labels: { app: trtllm-build }
     spec:
+      runtimeClassName: nvidia
       restartPolicy: Never
       nodeSelector:
         nvidia.com/gpu.present: "true"
@@ -26,6 +27,8 @@ spec:
                   name: hf-token
                   key: token
                   optional: true
+            - name: NVIDIA_DRIVER_CAPABILITIES
+              value: compute,utility
             - name: TP
               value: "{{ tp | string }}"
             - name: PP
