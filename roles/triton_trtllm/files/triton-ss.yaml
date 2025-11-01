@@ -5,19 +5,22 @@ metadata:
   namespace: default
 spec:
   serviceName: triton-llm
-  # `pp` (pipeline parallelism) controls the number of Triton pods/ranks.
-  replicas: {{ pp | int }}
+  replicas: 2
   podManagementPolicy: Parallel
   selector:
-    matchLabels: { app: triton-llm }
+    matchLabels:
+      app: triton-llm
   template:
     metadata:
-      labels: { app: triton-llm }
+      labels:
+        app: triton-llm
     spec:
       affinity:
         podAntiAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
-            - labelSelector: { matchLabels: { app: triton-llm } }
+            - labelSelector:
+                matchLabels:
+                  app: triton-llm
               topologyKey: kubernetes.io/hostname
       tolerations:
         - key: nvidia.com/gpu
@@ -31,18 +34,26 @@ spec:
             - "--model-control-mode=explicit"
             - "--exit-on-error=false"
           env:
-            - { name: NCCL_SOCKET_IFNAME, value: "{{ cx7_iface }}" }
-            - { name: NCCL_IB_DISABLE, value: "0" }
-            - { name: UCX_TLS, value: "rc,cuda_copy,gdr_copy,sm" }
+            - name: NCCL_SOCKET_IFNAME
+              value: "enp1s0f0np0"
+            - name: NCCL_IB_DISABLE
+              value: "0"
+            - name: UCX_TLS
+              value: "rc,cuda_copy,gdr_copy,sm"
           ports:
-            - { name: http, containerPort: 8000 }
-            - { name: grpc, containerPort: 8001 }
-            - { name: metrics, containerPort: 8002 }
+            - name: http
+              containerPort: 8000
+            - name: grpc
+              containerPort: 8001
+            - name: metrics
+              containerPort: 8002
           volumeMounts:
-            - { name: models, mountPath: /models }
+            - name: models
+              mountPath: /models
           resources:
             limits:
               nvidia.com/gpu: 1
       volumes:
         - name: models
-          persistentVolumeClaim: { claimName: triton-models }
+          persistentVolumeClaim:
+            claimName: triton-models

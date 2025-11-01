@@ -60,9 +60,9 @@
   changed_when: false
   when: "'primary' in group_names"
 
-- name: Render Longhorn Helm values (primary only)
-  template:
-    src: longhorn-values.yaml.j2
+- name: Copy Longhorn Helm values (primary only)
+  copy:
+    src: longhorn-values.yaml
     dest: /tmp/longhorn-values.yaml
     mode: '0644'
   when: "'primary' in group_names"
@@ -93,9 +93,9 @@
   failed_when: false
   when: "'primary' in group_names"
 
-- name: Render Longhorn StorageClass manifest (primary only)
-  template:
-    src: longhorn-storageclass.yaml.j2
+- name: Copy Longhorn StorageClass manifest (primary only)
+  copy:
+    src: longhorn-storageclass.yaml
     dest: /tmp/longhorn-storageclass.yaml
     mode: '0644'
   when: "'primary' in group_names"

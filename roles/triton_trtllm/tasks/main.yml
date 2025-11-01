@@ -27,15 +27,17 @@
   environment:
     KUBECONFIG: /etc/kubernetes/admin.conf
 
-- name: Render Triton StatefulSet
-  template:
-    src: triton-ss.yaml.j2
+- name: Copy Triton StatefulSet manifest
+  copy:
+    src: triton-ss.yaml
     dest: /tmp/triton-ss.yaml
+    mode: '0644'
 
-- name: Render Triton Service
-  template:
-    src: triton-svc.yaml.j2
+- name: Copy Triton Service manifest
+  copy:
+    src: triton-svc.yaml
     dest: /tmp/triton-svc.yaml
+    mode: '0644'
 
 - name: Apply Triton manifests
   shell: |

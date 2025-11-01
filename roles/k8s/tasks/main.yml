@@ -424,9 +424,9 @@
       failed_when: false
       changed_when: false
 
-    - name: Render Traefik Helm values
-      template:
-        src: traefik-values.yaml.j2
+    - name: Copy Traefik Helm values
+      copy:
+        src: traefik-values.yaml
         dest: /tmp/traefik-values.yaml
         mode: '0644'
 

@@ -48,10 +48,11 @@
   command: kubectl apply -f /tmp/trtllm-build-script-cm.yaml
   environment: { KUBECONFIG: /etc/kubernetes/admin.conf }
 
-- name: Render build Job manifest
-  template:
-    src: job.yaml.j2
+- name: Copy build Job manifest
+  copy:
+    src: trtllm-build-job.yaml
     dest: /tmp/trtllm-build-job.yaml
+    mode: '0644'
 
 - name: Delete previous Job if exists (to allow rerun)
   command: kubectl -n default delete job trtllm-build --ignore-not-found=true
