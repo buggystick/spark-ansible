@@ -65,6 +65,7 @@
     helm upgrade --install longhorn longhorn/longhorn
     --namespace longhorn-system
     --set defaultSettings.defaultDataPath={{ longhorn_data_dir }}
+    --set defaultSettings.defaultReplicaCount=2
   environment:
     KUBECONFIG: /etc/kubernetes/admin.conf
   when: "'primary' in group_names"
