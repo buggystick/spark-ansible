@@ -12,7 +12,6 @@ spec:
     metadata:
       labels: { app: trtllm-build }
     spec:
-      runtimeClassName: nvidia
       restartPolicy: Never
       nodeSelector:
         nvidia.com/gpu.present: "true"
@@ -29,6 +28,8 @@ spec:
                   optional: true
             - name: NVIDIA_DRIVER_CAPABILITIES
               value: compute,utility
+            - name: NVIDIA_VISIBLE_DEVICES
+              value: "all"
             - name: TP
               value: "{{ tp | string }}"
             - name: PP
