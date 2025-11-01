@@ -9,12 +9,6 @@ import time
 from pathlib import Path
 from typing import Iterable
 
-try:
-    from huggingface_hub import snapshot_download  # type: ignore
-except Exception:  # pragma: no cover - dependency optional in container
-    snapshot_download = None
-
-
 # HF Transfer relies on the `hf_transfer` binary which in turn requires DNS
 # access to `transfer.xethub.hf.co`.  The build cluster we target cannot
 # resolve that domain, leading to repeated download failures like the
@@ -28,8 +22,14 @@ except Exception:  # pragma: no cover - dependency optional in container
 # Transfer.  Force-disable it by default so we fall back to the regular
 # HTTPS endpoints that *are* reachable in the cluster.  Operators can re-enable
 # HF Transfer by exporting HF_HUB_DISABLE_HF_TRANSFER=0 before launching the
-# job if their environment supports it.
+# job if their environment supports it.  This must be set before importing the
+# hub so its internal helpers observe the flag.
 os.environ.setdefault("HF_HUB_DISABLE_HF_TRANSFER", "1")
+
+try:
+    from huggingface_hub import snapshot_download  # type: ignore
+except Exception:  # pragma: no cover - dependency optional in container
+    snapshot_download = None
 
 
 def log(message: str) -> None:
