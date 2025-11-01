@@ -397,3 +397,52 @@
     kubectl -n kube-system rollout status ds/cilium --timeout=5m
   changed_when: false
   when: "'primary' in group_names"
+
+# ------- Traefik Ingress Controller (primary only) -------
+- name: Install Traefik ingress controller (primary only)
+  when:
+    - "'primary' in group_names"
+    - k8s_install_traefik | default(true) | bool
+  block:
+    - name: Add Traefik repo
+      command: helm repo add traefik https://traefik.github.io/charts
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      changed_when: false
+      failed_when: false
+
+    - name: Update Helm repos
+      command: helm repo update
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      changed_when: false
+
+    - name: Create Traefik namespace
+      command: kubectl create ns {{ traefik_namespace }}
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      failed_when: false
+      changed_when: false
+
+    - name: Render Traefik Helm values
+      template:
+        src: traefik-values.yaml.j2
+        dest: /tmp/traefik-values.yaml
+        mode: '0644'
+
+    - name: Install/upgrade Traefik via Helm
+      command: >
+        helm upgrade --install traefik traefik/traefik
+        --namespace {{ traefik_namespace }}
+        --values /tmp/traefik-values.yaml
+        {% if traefik_chart_version | default('') | length > 0 %}--version {{ traefik_chart_version }}{% endif %}
+        --wait --timeout 10m0s
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Wait for Traefik deployment to be ready
+      shell: >
+        KUBECONFIG=/etc/kubernetes/admin.conf
+        kubectl -n {{ traefik_namespace }} rollout status deploy/traefik --timeout=5m
+      changed_when: false
+      failed_when: false

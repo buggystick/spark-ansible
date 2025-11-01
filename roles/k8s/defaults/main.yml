@@ -1,0 +1,11 @@
+---
+# Default variables for the Kubernetes role.
+# Controls Traefik ingress controller deployment.
+
+k8s_install_traefik: true
+
+traefik_namespace: traefik
+traefik_chart_version: ""
+traefik_service_type: NodePort
+traefik_web_node_port: 32080
+traefik_websecure_node_port: 32443

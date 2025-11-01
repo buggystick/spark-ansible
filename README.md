@@ -76,9 +76,11 @@ If you later add more nodes, increase **PP** accordingly and rebuild engines wit
 ```bash
 kubectl get pods -A
 kubectl -n openwebui port-forward svc/open-webui 8080:8080  # UI at http://localhost:8080
-# Longhorn UI exposed via NodePort (default 30080)
-kubectl -n longhorn-system get svc longhorn-frontend -o wide
-# Access via: http://<any-cluster-node-ip>:30080
+# Traefik ingress controller (NodePorts 32080/32443 by default)
+kubectl -n traefik get svc traefik -o wide
+# Longhorn UI ingress (default host: longhorn.local)
+kubectl -n longhorn-system get ingress -o wide
+# Access via: http://longhorn.local (point DNS/hosts to a node IP or curl -H "Host: longhorn.local" http://<node-ip>:32080)
 ```
 
 ## Quickstart (dev / Codex-friendly)
