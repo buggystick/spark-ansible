@@ -60,11 +60,18 @@
   changed_when: false
   when: "'primary' in group_names"
 
+- name: Render Longhorn Helm values (primary only)
+  template:
+    src: longhorn-values.yaml.j2
+    dest: /tmp/longhorn-values.yaml
+    mode: '0644'
+  when: "'primary' in group_names"
+
 - name: Install/upgrade Longhorn (primary only)
   command: >
     helm upgrade --install longhorn longhorn/longhorn
     --namespace longhorn-system
-    --set defaultSettings.defaultDataPath={{ longhorn_data_dir }}
+    --values /tmp/longhorn-values.yaml
   environment:
     KUBECONFIG: /etc/kubernetes/admin.conf
   when: "'primary' in group_names"

@@ -74,6 +74,9 @@ If you later add more nodes, increase **PP** accordingly and rebuild engines wit
 ```bash
 kubectl get pods -A
 kubectl -n openwebui port-forward svc/open-webui 8080:8080  # UI at http://localhost:8080
+# Longhorn UI exposed via NodePort (default 30080)
+kubectl -n longhorn-system get svc longhorn-frontend -o wide
+# Access via: http://<any-cluster-node-ip>:30080
 ```
 
 ## Quickstart (dev / Codex-friendly)
