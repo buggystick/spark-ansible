@@ -59,10 +59,10 @@
   failed_when: false
   when:
     - "'primary' in group_names"
-    - _gpuop_deploy is defined
-    - _gpuop_deploy.rc == 0
-    - _gpuop_deploy.stdout is defined
-    - _gpuop_deploy.stdout | length > 0
+    - >
+        _gpuop_deploy is defined and
+        _gpuop_deploy.rc == 0 and
+        ((_gpuop_deploy.stdout | default('')) | length) > 0
 
 - name: Check if NVIDIA device plugin DaemonSet exists
   shell: >
@@ -81,7 +81,7 @@
   failed_when: false
   when:
     - "'primary' in group_names"
-    - _gpuop_deviceplugin is defined
-    - _gpuop_deviceplugin.rc == 0
-    - _gpuop_deviceplugin.stdout is defined
-    - _gpuop_deviceplugin.stdout | length > 0
+    - >
+        _gpuop_deviceplugin is defined and
+        _gpuop_deviceplugin.rc == 0 and
+        ((_gpuop_deviceplugin.stdout | default('')) | length) > 0

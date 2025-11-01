@@ -58,10 +58,10 @@
   failed_when: false
   when:
     - "'primary' in group_names"
-    - _netop_deploy is defined
-    - _netop_deploy.rc == 0
-    - _netop_deploy.stdout is defined
-    - _netop_deploy.stdout | length > 0
+    - >
+        _netop_deploy is defined and
+        _netop_deploy.rc == 0 and
+        ((_netop_deploy.stdout | default('')) | length) > 0
 
 # --- Optional: create a minimal NicClusterPolicy to enable RDMA & device plugins ---
 - name: Check if NicClusterPolicy CRD exists
