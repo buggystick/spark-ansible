@@ -14,12 +14,14 @@ Features:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import platform
 import subprocess
 import sys
 import threading
 import time
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
 from shutil import disk_usage
@@ -43,17 +45,46 @@ except Exception:
     tqdm = None  # type: ignore
     TQDM_AVAILABLE = False
 
+# tqdm-logging for non-interactive log-friendly progress bars (optional)
+try:
+    from tqdm_logging import tqdm_logging_redirector  # type: ignore
+    TQDM_LOGGING_AVAILABLE = True
+except Exception:
+    TQDM_LOGGING_AVAILABLE = False
+
+    def tqdm_logging_redirector(*_args: object, **_kwargs: object):  # type: ignore
+        return nullcontext()
+
 
 # ==============================================================================
 # Logging & plumbing
 # ==============================================================================
 
-def _ts() -> str:
-    return datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S%z")
+class _TimeFormatter(logging.Formatter):
+    """Formatter that emits local timestamps similar to the legacy log helper."""
+
+    def formatTime(self, record: logging.LogRecord, datefmt: Optional[str] = None) -> str:
+        dt = datetime.fromtimestamp(record.created, timezone.utc).astimezone()
+        fmt = datefmt or "%Y-%m-%d %H:%M:%S%z"
+        return dt.strftime(fmt)
+
+
+def _get_logger() -> logging.Logger:
+    logger = logging.getLogger()
+    if not logger.handlers:
+        handler = logging.StreamHandler(stream=sys.stdout)
+        handler.setLevel(logging.INFO)
+        handler.setFormatter(_TimeFormatter("[%(asctime)s] %(message)s"))
+        logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    return logger
+
+
+LOGGER = _get_logger()
 
 
 def log(msg: str) -> None:
-    print(f"[{_ts()}] {msg}", flush=True)
+    LOGGER.info(msg)
 
 
 class Heartbeat:
@@ -151,20 +182,32 @@ def download_repo_with_progress(repo_id: str, cache_dir: str, token: Optional[st
     # If we have a file list, do per-file downloads to show progress.
     if files:
         log(f"[download] {repo_id}: {len(files)} files listed; starting per-file download")
-        progress_iter = tqdm(files, desc=f"Downloading {repo_id}", unit="file") if TQDM_AVAILABLE else files
-        last_path = ""
-        for f in progress_iter:
-            try:
-                last_path = hf_hub_download(  # type: ignore
-                    repo_id=repo_id,
-                    filename=f,
-                    cache_dir=cache_dir,
-                    token=token,
-                    force_download=False,
-                    local_files_only=False,
-                )
-            except Exception as e:
-                log(f"[download] warning: failed to fetch {f}: {e}")
+        progress_bar = None
+        iterator: Iterable[str]
+        if TQDM_AVAILABLE:
+            progress_bar = tqdm(files, desc=f"Downloading {repo_id}", unit="file")
+            iterator = progress_bar
+            progress_ctx = tqdm_logging_redirector()
+        else:
+            iterator = files
+            progress_ctx = nullcontext()
+
+        with progress_ctx:
+            for f in iterator:
+                try:
+                    hf_hub_download(  # type: ignore
+                        repo_id=repo_id,
+                        filename=f,
+                        cache_dir=cache_dir,
+                        token=token,
+                        force_download=False,
+                        local_files_only=False,
+                    )
+                except Exception as e:
+                    log(f"[download] warning: failed to fetch {f}: {e}")
+
+        if progress_bar is not None:
+            progress_bar.close()
         # After fetching files, ask snapshot_download to resolve the snapshot dir quickly
         hb = Heartbeat(f"finalizing snapshot for {repo_id}")
         hb.start()
@@ -206,7 +249,8 @@ def resolve_checkpoint(hf_id: str, model_name: str) -> str:
     if HF_AVAILABLE:
         log(
             f"Resolving HF snapshot for {model_name} ({hf_id}) "
-            f"(token={'yes' if token else 'no'}, tqdm={'yes' if TQDM_AVAILABLE else 'no'})"
+            f"(token={'yes' if token else 'no'}, tqdm={'yes' if TQDM_AVAILABLE else 'no'}, "
+            f"tqdm_logging={'yes' if TQDM_LOGGING_AVAILABLE else 'no'})"
         )
         return download_repo_with_progress(hf_id, str(cache_root), token)
 
