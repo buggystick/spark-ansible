@@ -25,7 +25,7 @@ fi
 
 # 2) Fallback: NVML via libnvidia-ml.so.1 (no python packages needed)
 if [ -z "${GPU_CHECK_OK:-}" ]; then
-  python3 - <<'PY'
+  if python3 - <<'PY'
 import ctypes, ctypes.util, sys
 def nvml_probe():
     try:
@@ -51,16 +51,21 @@ def nvml_probe():
         return 2
 sys.exit(nvml_probe())
 PY
-  case $? in
+    nvml_status=0
+  else
+    nvml_status=$?
+  fi
+  case ${nvml_status:-99} in
     0) GPU_CHECK_OK=1 ;;
     1) echo "[gpu-check] NVML reported 0 devices";;
     2) echo "[gpu-check] NVML not available in container (non-fatal)";;
+    *) echo "[gpu-check] NVML probe exited with unexpected status ${nvml_status}";;
   esac
 fi
 
 # 3) Fallback: CUDA Driver API via libcuda.so.1
 if [ -z "${GPU_CHECK_OK:-}" ]; then
-  python3 - <<'PY'
+  if python3 - <<'PY'
 import ctypes, ctypes.util, sys
 def cuda_probe():
     try:
@@ -81,10 +86,15 @@ def cuda_probe():
         return 2
 sys.exit(cuda_probe())
 PY
-  case $? in
+    cuda_status=0
+  else
+    cuda_status=$?
+  fi
+  case ${cuda_status:-99} in
     0) GPU_CHECK_OK=1 ;;
     1) echo "[gpu-check] CUDA driver reported 0 devices";;
     2) echo "[gpu-check] CUDA driver libs not visible (non-fatal)";;
+    *) echo "[gpu-check] CUDA driver probe exited with unexpected status ${cuda_status}";;
   esac
 fi
 
