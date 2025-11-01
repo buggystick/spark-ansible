@@ -13,7 +13,7 @@
 - hosts: primary
   become: yes
   roles:
-    - trtllm_build
+    - { role: trtllm_build, tags: ['trtllm_build','build'] }
 
 - hosts: primary
   become: yes
