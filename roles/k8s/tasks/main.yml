@@ -430,6 +430,20 @@
         dest: /tmp/traefik-values.yaml
         mode: '0644'
 
+    - name: Gather current Traefik release info
+      command: helm list --namespace {{ traefik_namespace }} --filter '^traefik$' --output json
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      register: _traefik_release
+      changed_when: false
+
+    - name: Parse Traefik release info
+      set_fact:
+        _traefik_release_info: >-
+          {{ (_traefik_release.stdout | trim | length > 0)
+              | ternary(_traefik_release.stdout | from_json, []) }}
+      changed_when: false
+
     - name: Install/upgrade Traefik via Helm
       command: >
         helm upgrade --install traefik traefik/traefik
@@ -439,10 +453,17 @@
         --wait --timeout 10m0s
       environment:
         KUBECONFIG: /etc/kubernetes/admin.conf
+      register: _traefik_upgrade
+      changed_when: >-
+        (_traefik_release_info | default([]) | length == 0) or
+        (
+          (traefik_chart_version | default('') | length > 0) and
+          (_traefik_release_info | default([]) | length > 0) and
+          ((_traefik_release_info[0].chart | default('')) != 'traefik-' ~ traefik_chart_version)
+        )
 
     - name: Wait for Traefik deployment to be ready
       shell: >
         KUBECONFIG=/etc/kubernetes/admin.conf
         kubectl -n {{ traefik_namespace }} rollout status deploy/traefik --timeout=5m
       changed_when: false
-      failed_when: false
