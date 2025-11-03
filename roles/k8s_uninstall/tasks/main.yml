@@ -1,0 +1,233 @@
+---
+# roles/k8s_uninstall/tasks/main.yml
+# Complete uninstall/purge of Kubernetes and related components (Cilium, Traefik, Longhorn,
+# NVIDIA GPU/Network Operators, etc.). When k8s_uninstall=true, performs cleanup and exits host.
+
+- name: Check if uninstall requested
+  set_fact:
+    _do_uninstall: "{{ k8s_uninstall | default(false) | bool }}"
+
+- name: Exit role early if uninstall not requested
+  meta: end_host
+  when: not _do_uninstall
+
+# Stop services early
+- name: Stop kubelet service (best effort)
+  ansible.builtin.systemd:
+    name: kubelet
+    state: stopped
+    enabled: false
+  failed_when: false
+
+- name: Stop containerd service (best effort)
+  ansible.builtin.systemd:
+    name: containerd
+    state: stopped
+    enabled: false
+  failed_when: false
+
+# Attempt to uninstall Helm releases first while cluster may still be reachable
+- name: Remove Helm releases (best effort)
+  when: "'primary' in group_names"
+  block:
+    - name: Uninstall Cilium (kube-system) via Helm
+      kubernetes.core.helm:
+        name: cilium
+        release_namespace: kube-system
+        kubeconfig: /etc/kubernetes/admin.conf
+        state: absent
+      failed_when: false
+
+    - name: Uninstall Traefik via Helm
+      kubernetes.core.helm:
+        name: traefik
+        release_namespace: "{{ traefik_namespace | default('traefik') }}"
+        kubeconfig: /etc/kubernetes/admin.conf
+        state: absent
+      failed_when: false
+
+    - name: Uninstall Longhorn via Helm
+      kubernetes.core.helm:
+        name: longhorn
+        release_namespace: longhorn-system
+        kubeconfig: /etc/kubernetes/admin.conf
+        state: absent
+      failed_when: false
+
+    - name: Uninstall NVIDIA GPU Operator via Helm
+      kubernetes.core.helm:
+        name: gpu-operator
+        release_namespace: nvidia-gpu-operator
+        kubeconfig: /etc/kubernetes/admin.conf
+        state: absent
+      failed_when: false
+
+    - name: Uninstall NVIDIA Network Operator via Helm
+      kubernetes.core.helm:
+        name: network-operator
+        release_namespace: network-operator
+        kubeconfig: /etc/kubernetes/admin.conf
+        state: absent
+      failed_when: false
+
+    - name: Delete operator and addon namespaces (best effort)
+      kubernetes.core.k8s:
+        kubeconfig: /etc/kubernetes/admin.conf
+        state: absent
+        definition:
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: "{{ item }}"
+      loop:
+        - longhorn-system
+        - nvidia-gpu-operator
+        - network-operator
+        - "{{ traefik_namespace | default('traefik') }}"
+      failed_when: false
+
+    - name: Remove NicClusterPolicy custom resources if present (best effort)
+      kubernetes.core.k8s:
+        kubeconfig: /etc/kubernetes/admin.conf
+        state: absent
+        api_version: mellanox.com/v1alpha1
+        kind: NicClusterPolicy
+        name: nic-cluster-policy
+      failed_when: false
+
+    - name: Gather all CRDs to evaluate for deletion (best effort)
+      kubernetes.core.k8s_info:
+        api_version: apiextensions.k8s.io/v1
+        kind: CustomResourceDefinition
+        kubeconfig: /etc/kubernetes/admin.conf
+      register: _all_crds
+      failed_when: false
+
+    - name: Build list of CRDs for Longhorn, Cilium, Traefik, NVIDIA, Mellanox (best effort)
+      set_fact:
+        _longhorn_crds: "{{ (_all_crds.resources | default([])) | selectattr('spec.group','equalto','longhorn.io') | map(attribute='metadata.name') | list }}"
+        _cilium_crds: "{{ (_all_crds.resources | default([])) | selectattr('spec.group','equalto','cilium.io') | map(attribute='metadata.name') | list }}"
+        _traefik_crds: "{{ (_all_crds.resources | default([])) | selectattr('spec.group','equalto','traefik.containo.us') | map(attribute='metadata.name') | list }}"
+        _mellanox_crds: "{{ (_all_crds.resources | default([])) | selectattr('spec.group','equalto','mellanox.com') | map(attribute='metadata.name') | list }}"
+        _nvidia_crds: "{{ (_all_crds.resources | default([])) | selectattr('spec.group','equalto','nvidia.com') | map(attribute='metadata.name') | list }}"
+        _crds_to_delete: "{{ (_longhorn_crds + _cilium_crds + _traefik_crds + _mellanox_crds + _nvidia_crds) | unique }}"
+
+    - name: Delete selected CRDs (best effort)
+      kubernetes.core.k8s:
+        kubeconfig: /etc/kubernetes/admin.conf
+        api_version: apiextensions.k8s.io/v1
+        kind: CustomResourceDefinition
+        name: "{{ item }}"
+        state: absent
+      loop: "{{ _crds_to_delete | default([]) }}"
+      failed_when: false
+
+    - name: Discover NVIDIA ClusterPolicy resources (best effort)
+      kubernetes.core.k8s_info:
+        api_version: nvidia.com/v1
+        kind: ClusterPolicy
+        kubeconfig: /etc/kubernetes/admin.conf
+      register: _nvidia_cps
+      failed_when: false
+
+    - name: Remove NVIDIA ClusterPolicy resources if present (best effort)
+      kubernetes.core.k8s:
+        kubeconfig: /etc/kubernetes/admin.conf
+        state: absent
+        api_version: nvidia.com/v1
+        kind: ClusterPolicy
+        name: "{{ item.metadata.name }}"
+      loop: "{{ _nvidia_cps.resources | default([]) }}"
+      failed_when: false
+
+# Force-clean any leftover CRI and kubelet mounts
+- name: Force-clean containerd/CRI workloads and kubelet mounts
+  include_tasks: _cleanup_cri.yml
+  vars:
+    track_changes: false
+
+# kubeadm reset
+- name: kubeadm reset (best effort)
+  ansible.builtin.command: kubeadm reset -f --cri-socket=unix:///run/containerd/containerd.sock
+  register: _uninstall_reset
+  failed_when: false
+
+# Remove directories and files
+- name: Remove Kubernetes and CNI directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/kubernetes
+    - /var/lib/etcd
+    - /var/lib/kubelet
+    - /etc/cni/net.d
+    - /var/lib/cni
+    - /var/run/cni
+    - /var/lib/cilium
+    - /var/lib/containerd
+    - /opt/cni/bin
+
+- name: Clean /var/run/cilium safely (best effort)
+  include_tasks: _clean_cilium_run_dir.yml
+
+- name: Remove Kubernetes/containerd config files
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/containerd/config.toml
+    - /etc/crictl.yaml
+    - /etc/sysctl.d/99-k8s.conf
+    - /etc/modules-load.d/k8s.conf
+
+- name: Remove kubeconfig directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "/home/{{ ansible_user }}/.kube"
+    - /root/.kube
+
+# Longhorn data path cleanup on all nodes (best effort)
+- name: Remove Longhorn data path (best effort)
+  file:
+    path: "{{ longhorn_data_dir | default('/srv/longhorn') }}"
+    state: absent
+  failed_when: false
+
+# Purge packages and apt repo (Debian)
+- name: Purge Kubernetes and CRI packages (apt)
+  ansible.builtin.apt:
+    name:
+      - kubelet
+      - kubeadm
+      - kubectl
+      - containerd
+      - cri-tools
+    state: absent
+    purge: yes
+    autoremove: yes
+    update_cache: yes
+  when: ansible_os_family == 'Debian'
+  failed_when: false
+
+- name: Remove Kubernetes apt repository
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/{{ k8s_channel | default('v1.30') }}/deb/ /"
+    filename: kubernetes
+    state: absent
+    update_cache: yes
+  when: ansible_os_family == 'Debian'
+  failed_when: false
+
+- name: Remove Kubernetes apt keyring file
+  ansible.builtin.file:
+    path: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+    state: absent
+  when: ansible_os_family == 'Debian'
+  failed_when: false
+
+# Final: end host so no further tasks run for this host
+- name: End role execution on this host after uninstall
+  ansible.builtin.meta: end_host

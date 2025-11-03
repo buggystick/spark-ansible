@@ -1,12 +1,7 @@
 ---
-# roles/k8s/tasks/main.yml
-# Idempotent Kubernetes (kubeadm) setup using containerd (CRI enabled)
-# - Enables CRI + SystemdCgroup in containerd
-# - Optional full reset via -e k8s_reset=true
-# - Auto-rescues kubeadm init if it fails
-# - Joins workers only if not already joined
-# - Installs Cilium via Helm using admin.conf
-# Inventory groups expected: [primary], [workers]
+# roles/k8s_install/tasks/main.yml
+# Split from the old roles/k8s role: only install/configure logic lives here.
+# Uses containerd as CRI, kubeadm for control plane/worker join, and installs Cilium and optional Traefik.
 
 # ------- Defaults (override via -e) -------
 - name: Set sensible defaults
@@ -119,50 +114,34 @@
     name: net.bridge.bridge-nf-call-ip6tables
     value: '1'
     state: present
-    sysctl_set: true
-    reload: true
 
-- name: Ensure IPv4 forwarding is enabled
+- name: Ensure IPv4 forwarding sysctl is set
   ansible.posix.sysctl:
     name: net.ipv4.ip_forward
     value: '1'
     state: present
-    sysctl_set: true
-    reload: true
 
-- name: Restart & enable containerd
+- name: Ensure containerd service is enabled & started
   systemd:
     name: containerd
-    state: restarted
-    enabled: yes
+    enabled: true
+    state: started
 
-# ------- Swap off (idempotent) -------
-- name: Disable swap now (if any)
-  command: swapoff -a
-  when: ansible_swaptotal_mb|default(0) | int > 0
-  changed_when: ansible_swaptotal_mb|default(0) | int > 0
-
-- name: Comment swap lines in fstab
-  replace:
-    path: /etc/fstab
-    regexp: '^([^#].*\\sswap\\s.*)$'
-    replace: '# \\1'
-
-# ------- Kubernetes APT repo + packages -------
+# ------- Kubernetes apt repo + packages -------
 - name: Ensure /etc/apt/keyrings exists
-  ansible.builtin.file:
+  file:
     path: /etc/apt/keyrings
     state: directory
     mode: '0755'
 
-- name: Add Kubernetes apt signing key
-  ansible.builtin.apt_key:
+- name: Add Kubernetes apt key (signed repository)
+  get_url:
     url: "https://pkgs.k8s.io/core:/stable:/{{ k8s_channel }}/deb/Release.key"
-    state: present
-    keyring: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+    dest: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+    mode: '0644'
 
 - name: Add Kubernetes apt repository
-  ansible.builtin.apt_repository:
+  apt_repository:
     repo: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/{{ k8s_channel }}/deb/ /"
     filename: kubernetes
     state: present
@@ -177,185 +156,85 @@
     state: present
     update_cache: yes
 
-- name: Enable kubelet
+- name: Enable kubelet (do not start yet)
   systemd:
     name: kubelet
-    enabled: yes
+    enabled: true
+    state: stopped
 
-# ------- Optional global reset (if requested) -------
-- name: Reset Kubernetes (kubeadm) if requested
-  when: k8s_reset | default(false) | bool
+# ------- Primary: kubeadm init with retry and recovery -------
+- name: Check if control plane is already initialized (primary only)
+  stat:
+    path: /etc/kubernetes/admin.conf
+  register: _cp_inited
+  when: "'primary' in group_names"
+
+- name: Generate kubeadm init config (primary only)
+  copy:
+    dest: /tmp/kubeadm-init.yaml
+    mode: '0644'
+    content: |
+      apiVersion: kubeadm.k8s.io/v1beta4
+      kind: ClusterConfiguration
+      networking:
+        podSubnet: {{ k8s_pod_cidr }}
+      kubernetesVersion: stable
+      apiServer:
+        extraArgs:
+          authorization-mode: Node,RBAC
+  when: "'primary' in group_names and not _cp_inited.stat.exists"
+
+- name: Attempt kubeadm init (primary only)
+  command: kubeadm init --config /tmp/kubeadm-init.yaml --cri-socket {{ k8s_cri_socket }}
+  register: _init_try
+  changed_when: true
+  failed_when: false
+  when: "'primary' in group_names and not _cp_inited.stat.exists"
+
+- name: Rescue kubeadm init failure by cleanup and retry (primary only)
+  when:
+    - "'primary' in group_names"
+    - not _cp_inited.stat.exists
+    - _init_try.rc != 0
   block:
-    - name: Stop kubelet (prevent new pods/mounts)
-      systemd:
-        name: kubelet
-        state: stopped
-        enabled: yes
+    - name: Force-clean containerd/CRI workloads and kubelet mounts
+      include_tasks: _cleanup_cri.yml
+      vars:
+        track_changes: false
+    - name: kubeadm reset after failure
+      command: kubeadm reset -f --cri-socket={{ k8s_cri_socket }}
       failed_when: false
+    - name: Retry kubeadm init
+      command: kubeadm init --config /tmp/kubeadm-init.yaml --cri-socket {{ k8s_cri_socket }}
 
-    - name: Force-clean containerd k8s workload (tasks, containers, CRI pods)
-      shell: |
-        set -Eeuo pipefail
-        removed_any=0
-
-        # Kill/delete any running tasks in containerd k8s namespace
-        for id in $(ctr -n k8s.io tasks ls -q 2>/dev/null || true); do
-          ctr -n k8s.io tasks kill -s KILL "$id" 2>/dev/null || true
-          ctr -n k8s.io tasks delete "$id" 2>/dev/null || true
-          removed_any=1
-        done
-
-        # Delete any containers in containerd k8s namespace
-        for id in $(ctr -n k8s.io containers ls -q 2>/dev/null || true); do
-          ctr -n k8s.io containers delete "$id" 2>/dev/null || true
-          removed_any=1
-        done
-
-        # Remove CRI containers/pods if CRI still lists any (safe if none)
-        if crictl ps -aq >/dev/null 2>&1; then
-          conts="$(crictl ps -aq || true)"
-          if [ -n "${conts:-}" ]; then
-            crictl rm --force $conts 2>/dev/null || true
-            removed_any=1
-          fi
-        fi
-        if crictl pods -aq >/dev/null 2>&1; then
-          pods="$(crictl pods -aq || true)"
-          if [ -n "${pods:-}" ]; then
-            crictl rmp --force $pods 2>/dev/null || true
-            removed_any=1
-          fi
-        fi
-
-        # Lazy-unmount any kubelet mounts
-        mnts="$(mount | awk '/\/var\/lib\/kubelet/ {print $3}' || true)"
-        if [ -n "${mnts:-}" ]; then
-          umount -l ${mnts} 2>/dev/null || true
-          removed_any=1
-        fi
-
-        # Print a marker if anything was removed (used for changed_when)
-        if [ "$removed_any" -eq 1 ]; then
-          echo "CLEANED_CONTAINERD_OR_MOUNTS"
-        fi
-      args:
-        executable: /bin/bash
-      register: _k8s_cleanup_containerd
-      changed_when: "'CLEANED_CONTAINERD_OR_MOUNTS' in _k8s_cleanup_containerd.stdout"
-      failed_when: false
-
-    - name: Restart containerd to refresh CRI
-      systemd:
-        name: containerd
-        state: restarted
-        enabled: yes
-      failed_when: false
-
-    - name: kubeadm reset (explicit CRI socket)
-      command: kubeadm reset -f --cri-socket=unix:///run/containerd/containerd.sock
-      register: _reset
-      failed_when: false
-
-    - name: Clean CNI state (safe to remove)
+- name: Ensure kubeconfig for root and ansible_user (primary only)
+  when: "'primary' in group_names"
+  block:
+    - name: Create .kube dirs
       file:
         path: "{{ item }}"
-        state: absent
-      loop:
-        - /etc/cni/net.d
-        - /var/lib/cni
-        - /var/run/cni
-        - /var/lib/cilium
-
-    # /var/run/cilium can contain protected cgroup files (e.g., io.prio.class).
-    # Try to unmount (if bind-mounted), then best-effort prune contents and remove dir.
-    - name: Clean /var/run/cilium safely
-      shell: |
-        set -Eeuo pipefail
-        if mountpoint -q /var/run/cilium; then
-          umount -l /var/run/cilium || true
-        fi
-        if [ -d /var/run/cilium ]; then
-          # Remove what we can; ignore protected entries
-          find /var/run/cilium -mindepth 1 -exec rm -rf -- {} + 2>/dev/null || true
-          rmdir /var/run/cilium 2>/dev/null || true
-        fi
-      args:
-        executable: /bin/bash
-      changed_when: false
-      failed_when: false
-
-    - name: Recreate CNI dir
-      file:
-        path: /etc/cni/net.d
         state: directory
         mode: '0755'
+      loop:
+        - /root/.kube
+        - "/home/{{ ansible_user }}/.kube"
+    - name: Copy admin.conf to kubeconfigs
+      copy:
+        src: /etc/kubernetes/admin.conf
+        dest: "{{ item }}"
+        remote_src: true
+      loop:
+        - /root/.kube/config
+        - "/home/{{ ansible_user }}/.kube/config"
 
-# ------- Control plane (primary) with auto-rescue -------
-- name: Initialize control-plane (primary only) with auto-rescue
-  block:
-    - name: Check if control-plane already initialized
-      stat:
-        path: /etc/kubernetes/admin.conf
-      register: k8s_adminconf
-
-    - name: kubeadm init (only if not initialized)
-      command: >
-        kubeadm init
-        --pod-network-cidr={{ k8s_pod_cidr }}
-        --cri-socket={{ k8s_cri_socket }}
-      when: not k8s_adminconf.stat.exists
-
-  rescue:
-    - name: Force reset control-plane (rescue)
-      command: kubeadm reset -f
-    - name: kubeadm init (retry after reset)
-      command: >
-        kubeadm init
-        --pod-network-cidr={{ k8s_pod_cidr }}
-        --cri-socket={{ k8s_cri_socket }}
-  when: "'primary' in group_names"
-
-- name: Ensure user kube dir exists (primary only)
-  file:
-    path: "/home/{{ ansible_user }}/.kube"
-    state: directory
-    mode: '0755'
-    owner: "{{ ansible_user }}"
-    group: "{{ ansible_user }}"
-  when: "'primary' in group_names"
-
-- name: Copy kubeconfig to user (primary only)
-  copy:
-    remote_src: true
-    src: /etc/kubernetes/admin.conf
-    dest: "/home/{{ ansible_user }}/.kube/config"
-    mode: '0644'
-    owner: "{{ ansible_user }}"
-    group: "{{ ansible_user }}"
-  when: "'primary' in group_names"
-
-# ------- Wait for API before Helm-based installs -------
-- name: Wait for API server by listing default Namespace (primary only)
-  kubernetes.core.k8s_info:
-    api_version: v1
-    kind: Namespace
-    name: default
-    kubeconfig: /etc/kubernetes/admin.conf
-  register: _apiready
-  retries: 30
-  delay: 2
-  until: _apiready.resources is defined and (_apiready.resources | length) > 0
-  changed_when: false
-  when: "'primary' in group_names"
-
-# ------- Generate join command on primary & share to workers -------
-- name: Obtain join command (primary only)
-  command: kubeadm token create --print-join-command --ttl 30m
+# ------- Discover and share join command -------
+- name: Obtain join command from control plane (primary only)
+  command: kubeadm token create --print-join-command
   register: _join_cmd_raw
   changed_when: false
   when: "'primary' in group_names"
 
-- name: Build final join command with CRI socket (primary only)
+- name: Compute final join command with CRI socket (primary only)
   set_fact:
     k8s_join_cmd_final: "{{ _join_cmd_raw.stdout }} --cri-socket {{ k8s_cri_socket }}"
   when: "'primary' in group_names"
@@ -381,8 +260,15 @@
     - cluster_join_cmd | length > 0
 
 # ------- CNI (Cilium via Helm using admin.conf) -------
+- name: Ensure Helm installer script is present (primary only)
+  copy:
+    src: get-helm-3.sh
+    dest: /tmp/get-helm-3.sh
+    mode: '0755'
+  when: "'primary' in group_names"
+
 - name: Install Helm (primary only)
-  shell: curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+  command: bash /tmp/get-helm-3.sh
   args:
     creates: /usr/local/bin/helm
   when: "'primary' in group_names"
@@ -406,7 +292,7 @@
     create_namespace: false
     kubeconfig: /etc/kubernetes/admin.conf
     wait: true
-    wait_timeout: 600
+    wait_timeout: "600s"
     state: present
   when: "'primary' in group_names"
 
@@ -459,14 +345,14 @@
         name: traefik
         chart_ref: traefik
         chart_repo_url: https://traefik.github.io/charts
-        chart_version: "{{ (traefik_chart_version | default('') | length > 0) | ternary(traefik_chart_version, k8s_traefik_chart_version) }}"
+        chart_version: "{{ traefik_chart_version }}"
         release_namespace: "{{ traefik_namespace }}"
         create_namespace: false
         values_files:
           - /tmp/traefik-values.yaml
         kubeconfig: /etc/kubernetes/admin.conf
         wait: true
-        wait_timeout: 600
+        wait_timeout: "600s"
         state: present
 
     - name: Wait for Traefik deployment to be ready
@@ -478,7 +364,7 @@
         kubeconfig: /etc/kubernetes/admin.conf
         wait: true
         wait_sleep: 10
-        wait_timeout: 300
+        wait_timeout: 600
         wait_condition:
           type: Available
           status: "True"

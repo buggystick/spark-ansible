@@ -1,0 +1,17 @@
+---
+# Shared task: safely clean /var/run/cilium, handling potential mounts and protected files.
+- name: Clean /var/run/cilium safely
+  ansible.builtin.shell: |
+    set -Eeuo pipefail
+    if mountpoint -q /var/run/cilium; then
+      umount -l /var/run/cilium || true
+    fi
+    if [ -d /var/run/cilium ]; then
+      # Remove what we can; ignore protected entries
+      find /var/run/cilium -mindepth 1 -exec rm -rf -- {} + 2>/dev/null || true
+      rmdir /var/run/cilium 2>/dev/null || true
+    fi
+  args:
+    executable: /bin/bash
+  changed_when: false
+  failed_when: false
