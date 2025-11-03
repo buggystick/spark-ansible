@@ -1,29 +1,37 @@
 ---
-- name: Add Open WebUI repo
-  command: helm repo add open-webui https://helm.openwebui.com --force-update
-  changed_when: false
-  environment:
-    KUBECONFIG: /etc/kubernetes/admin.conf
+- name: Ensure Open WebUI Helm repo configured
+  kubernetes.core.helm_repository:
+    name: open-webui
+    repo_url: https://helm.openwebui.com
+    state: present
+    force_update: true
+    kubeconfig: /etc/kubernetes/admin.conf
 
-- name: Update repos
-  command: helm repo update
-  environment:
-    KUBECONFIG: /etc/kubernetes/admin.conf
-
-- name: Create namespace
-  command: kubectl create ns openwebui
-  environment:
-    KUBECONFIG: /etc/kubernetes/admin.conf
-  failed_when: false
+- name: Ensure openwebui namespace exists
+  kubernetes.core.k8s:
+    kubeconfig: /etc/kubernetes/admin.conf
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: openwebui
 
 - name: Push values
   copy:
     src: "{{ playbook_dir }}/files/openwebui-values.yaml"
     dest: /tmp/openwebui-values.yaml
 
-- name: Install Open WebUI
-  command: >
-    helm upgrade --install open-webui open-webui/open-webui
-    --namespace openwebui -f /tmp/openwebui-values.yaml
-  environment:
-    KUBECONFIG: /etc/kubernetes/admin.conf
+- name: Install/upgrade Open WebUI via Helm
+  kubernetes.core.helm:
+    name: open-webui
+    chart_ref: open-webui
+    chart_repo_url: https://helm.openwebui.com
+    release_namespace: openwebui
+    create_namespace: false
+    values_files:
+      - /tmp/openwebui-values.yaml
+    kubeconfig: /etc/kubernetes/admin.conf
+    wait: true
+    wait_timeout: 600
+    state: present

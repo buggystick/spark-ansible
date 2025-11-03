@@ -365,9 +365,9 @@ def main() -> None:
             "trtllm-build",
             "--checkpoint_dir", checkpoint_dir,
             "--output_dir", str(out_dir),
-            "--world_size", str(world),
-            "--tp_size", str(tp),
-            "--pp_size", str(pp),
+            # Note: TRT-LLM >= 1.1 removed --world_size/--tp_size/--pp_size.
+            # Parallelism is derived from configs or --auto_parallel. We omit these flags to
+            # maintain compatibility. The generated Triton config below still records TP/PP.
             "--gpus_per_node", "1",
             "--max_input_len", "8192",
             "--max_seq_len", str(8192 + 1024),

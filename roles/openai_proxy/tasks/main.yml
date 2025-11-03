@@ -1,65 +1,30 @@
-- name: Ensure temporary proxy directory exists
-  ansible.builtin.file:
-    path: /tmp/openai-proxy
-    state: directory
-    mode: "0755"
+- name: Read proxy.py content from role files
+  ansible.builtin.set_fact:
+    _proxy_py: "{{ lookup('file', role_path + '/files/proxy.py') }}"
 
-- name: Copy proxy code to host
-  ansible.builtin.copy:
-    src: proxy.py
-    dest: /tmp/openai-proxy/proxy.py
-    mode: "0644"
+- name: Ensure OpenAI proxy ConfigMap is present
+  kubernetes.core.k8s:
+    kubeconfig: /etc/kubernetes/admin.conf
+    state: present
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: openai-proxy-code
+        namespace: default
+      data:
+        proxy.py: |
+          {{ _proxy_py | indent(10) }}
 
-- name: Generate ConfigMap manifest with proxy code
-  ansible.builtin.command:
-    argv:
-      - kubectl
-      - -n
-      - default
-      - create
-      - configmap
-      - openai-proxy-code
-      - "--from-file=proxy.py=/tmp/openai-proxy/proxy.py"
-      - -o
-      - yaml
-      - "--dry-run=client"
-  environment:
-    KUBECONFIG: /etc/kubernetes/admin.conf
-  register: openai_proxy_configmap_manifest
-  changed_when: false
-
-- name: Write ConfigMap manifest to disk
-  ansible.builtin.copy:
-    content: "{{ openai_proxy_configmap_manifest.stdout }}\n"
-    dest: /tmp/openai-proxy-cm.yaml
-    mode: "0644"
-
-- name: Apply proxy ConfigMap
-  ansible.builtin.command:
-    argv:
-      - kubectl
-      - apply
-      - -f
-      - /tmp/openai-proxy-cm.yaml
-  environment:
-    KUBECONFIG: /etc/kubernetes/admin.conf
-
-- name: Render proxy deployment
-  template:
+- name: Render proxy deployment manifest
+  ansible.builtin.template:
     src: proxy-deploy.yaml.j2
     dest: /tmp/openai-proxy.yaml
+    mode: "0644"
 
-- name: Apply proxy
-  ansible.builtin.command:
-    argv:
-      - kubectl
-      - apply
-      - -f
-      - /tmp/openai-proxy.yaml
-  environment:
-    KUBECONFIG: /etc/kubernetes/admin.conf
-
-- name: Remove temporary proxy script
-  ansible.builtin.file:
-    path: /tmp/openai-proxy/proxy.py
-    state: absent
+- name: Apply proxy Deployment/Service
+  kubernetes.core.k8s:
+    kubeconfig: /etc/kubernetes/admin.conf
+    state: present
+    src: /tmp/openai-proxy.yaml
+    apply: yes

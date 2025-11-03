@@ -14,7 +14,8 @@
     k8s_pod_cidr: "{{ k8s_pod_cidr | default('10.244.0.0/16') }}"
     k8s_cri_socket: "{{ k8s_cri_socket | default('unix:///run/containerd/containerd.sock') }}"
     k8s_channel: "{{ k8s_channel | default('v1.30') }}"
-    k8s_cilium_chart_version: "{{ k8s_cilium_chart_version | default('1.15.6') }}"
+    k8s_cilium_chart_version: "{{ k8s_cilium_chart_version | default('1.18.3') }}"
+    k8s_traefik_chart_version: "{{ k8s_traefik_chart_version | default('37.2.0') }}"
 
 # ------- Base OS deps -------
 - name: Install base packages
@@ -25,6 +26,7 @@
       - curl
       - gnupg
       - lsb-release
+      - python3-kubernetes
     state: present
     update_cache: yes
 
@@ -94,12 +96,39 @@
       net.bridge.bridge-nf-call-ip6tables = 1
       net.ipv4.ip_forward = 1
 
-- name: Load modules & apply sysctl
-  shell: |
-    modprobe br_netfilter || true
-    modprobe overlay || true
-    sysctl --system
-  changed_when: false
+- name: Ensure overlay module is loaded
+  community.general.modprobe:
+    name: overlay
+    state: present
+
+- name: Ensure br_netfilter module is loaded
+  community.general.modprobe:
+    name: br_netfilter
+    state: present
+
+- name: Ensure netfilter sysctl for IPv4 is set
+  ansible.posix.sysctl:
+    name: net.bridge.bridge-nf-call-iptables
+    value: '1'
+    state: present
+    sysctl_set: true
+    reload: true
+
+- name: Ensure netfilter sysctl for IPv6 is set
+  ansible.posix.sysctl:
+    name: net.bridge.bridge-nf-call-ip6tables
+    value: '1'
+    state: present
+    sysctl_set: true
+    reload: true
+
+- name: Ensure IPv4 forwarding is enabled
+  ansible.posix.sysctl:
+    name: net.ipv4.ip_forward
+    value: '1'
+    state: present
+    sysctl_set: true
+    reload: true
 
 - name: Restart & enable containerd
   systemd:
@@ -120,24 +149,24 @@
     replace: '# \\1'
 
 # ------- Kubernetes APT repo + packages -------
-- name: Ensure keyrings directory exists
-  file:
+- name: Ensure /etc/apt/keyrings exists
+  ansible.builtin.file:
     path: /etc/apt/keyrings
     state: directory
     mode: '0755'
 
 - name: Add Kubernetes apt signing key
-  shell: |
-    curl -fsSL https://pkgs.k8s.io/core:/stable:/{{ k8s_channel }}/deb/Release.key \
-    | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-  args:
-    creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+  ansible.builtin.apt_key:
+    url: "https://pkgs.k8s.io/core:/stable:/{{ k8s_channel }}/deb/Release.key"
+    state: present
+    keyring: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
 
 - name: Add Kubernetes apt repository
-  copy:
-    dest: /etc/apt/sources.list.d/kubernetes.list
-    content: |
-      deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/{{ k8s_channel }}/deb/ /
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/{{ k8s_channel }}/deb/ /"
+    filename: kubernetes
+    state: present
+    update_cache: yes
 
 - name: Install kubelet, kubeadm, kubectl
   apt:
@@ -286,20 +315,36 @@
         --cri-socket={{ k8s_cri_socket }}
   when: "'primary' in group_names"
 
+- name: Ensure user kube dir exists (primary only)
+  file:
+    path: "/home/{{ ansible_user }}/.kube"
+    state: directory
+    mode: '0755'
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+  when: "'primary' in group_names"
+
 - name: Copy kubeconfig to user (primary only)
-  shell: |
-    mkdir -p /home/{{ ansible_user }}/.kube
-    cp /etc/kubernetes/admin.conf /home/{{ ansible_user }}/.kube/config
-    chown {{ ansible_user }}:{{ ansible_user }} /home/{{ ansible_user }}/.kube/config
+  copy:
+    remote_src: true
+    src: /etc/kubernetes/admin.conf
+    dest: "/home/{{ ansible_user }}/.kube/config"
+    mode: '0644'
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
   when: "'primary' in group_names"
 
 # ------- Wait for API before Helm-based installs -------
-- name: Wait for API server to be reachable (primary only)
-  shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl get --raw=/healthz
+- name: Wait for API server by listing default Namespace (primary only)
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+    name: default
+    kubeconfig: /etc/kubernetes/admin.conf
   register: _apiready
   retries: 30
   delay: 2
-  until: _apiready.rc == 0
+  until: _apiready.resources is defined and (_apiready.resources | length) > 0
   changed_when: false
   when: "'primary' in group_names"
 
@@ -354,14 +399,14 @@
 - name: Deploy Cilium via Helm (primary only)
   kubernetes.core.helm:
     name: cilium
-    chart_ref: cilium/cilium
+    chart_ref: cilium
     chart_repo_url: https://helm.cilium.io
     chart_version: "{{ k8s_cilium_chart_version }}"
     release_namespace: kube-system
     create_namespace: false
     kubeconfig: /etc/kubernetes/admin.conf
     wait: true
-    timeout: 600
+    wait_timeout: 600
     state: present
   when: "'primary' in group_names"
 
@@ -412,16 +457,16 @@
     - name: Install/upgrade Traefik via Helm
       kubernetes.core.helm:
         name: traefik
-        chart_ref: traefik/traefik
+        chart_ref: traefik
         chart_repo_url: https://traefik.github.io/charts
+        chart_version: "{{ (traefik_chart_version | default('') | length > 0) | ternary(traefik_chart_version, k8s_traefik_chart_version) }}"
         release_namespace: "{{ traefik_namespace }}"
         create_namespace: false
         values_files:
           - /tmp/traefik-values.yaml
-        chart_version: "{{ traefik_chart_version | default(omit) }}"
         kubeconfig: /etc/kubernetes/admin.conf
         wait: true
-        timeout: 600
+        wait_timeout: 600
         state: present
 
     - name: Wait for Traefik deployment to be ready

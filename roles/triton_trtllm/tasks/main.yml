@@ -1,15 +1,19 @@
 ---
-- name: Create default ns
-  command: kubectl create ns default
-  failed_when: false
-  environment:
-    KUBECONFIG: /etc/kubernetes/admin.conf
+- name: Ensure default namespace exists (usually present)
+  kubernetes.core.k8s:
+    kubeconfig: /etc/kubernetes/admin.conf
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: default
 
-- name: Create models PVC (Longhorn RWX)
-  copy:
-    dest: /tmp/triton-models-pvc.yaml
-    mode: '0644'
-    content: |
+- name: Ensure models PVC (Longhorn RWX) exists
+  kubernetes.core.k8s:
+    kubeconfig: /etc/kubernetes/admin.conf
+    state: present
+    definition:
       apiVersion: v1
       kind: PersistentVolumeClaim
       metadata:
@@ -22,26 +26,31 @@
             storage: 200Gi
         storageClassName: longhorn
 
-- name: Apply models PVC
-  command: kubectl apply -f /tmp/triton-models-pvc.yaml
-  environment:
-    KUBECONFIG: /etc/kubernetes/admin.conf
+- name: Apply Triton Service manifest
+  kubernetes.core.k8s:
+    kubeconfig: /etc/kubernetes/admin.conf
+    state: present
+    src: "{{ role_path }}/files/triton-svc.yaml"
+    apply: yes
 
-- name: Copy Triton StatefulSet manifest
-  copy:
-    src: triton-ss.yaml
-    dest: /tmp/triton-ss.yaml
-    mode: '0644'
+- name: Apply Triton StatefulSet manifest
+  kubernetes.core.k8s:
+    kubeconfig: /etc/kubernetes/admin.conf
+    state: present
+    src: "{{ role_path }}/files/triton-ss.yaml"
+    apply: yes
 
-- name: Copy Triton Service manifest
-  copy:
-    src: triton-svc.yaml
-    dest: /tmp/triton-svc.yaml
-    mode: '0644'
-
-- name: Apply Triton manifests
-  shell: |
-    kubectl apply -f /tmp/triton-svc.yaml
-    kubectl apply -f /tmp/triton-ss.yaml
-  environment:
-    KUBECONFIG: /etc/kubernetes/admin.conf
+- name: Wait for Triton pods to be Ready
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: default
+    label_selectors:
+      - app=triton-llm
+    kubeconfig: /etc/kubernetes/admin.conf
+    wait: true
+    wait_sleep: 10
+    wait_timeout: 1200
+    wait_condition:
+      type: Ready
+      status: "True"

@@ -3,4 +3,8 @@
 # Example:
 collections:
   - name: kubernetes.core
-    version: '>=2.4.0'
+    version: '>=2.4.4'
+  - name: community.general
+    version: '>=9.0.0'
+  - name: ansible.posix
+    version: '>=1.5.4'

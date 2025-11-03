@@ -9,81 +9,82 @@
     creates: /usr/local/bin/helm
   when: "'primary' in group_names"
 
-- name: Wait for API server (primary only)
-  shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl get --raw=/healthz
+- name: Wait for API server by listing default Namespace (primary only)
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+    name: default
+    kubeconfig: /etc/kubernetes/admin.conf
   register: _apiready
   retries: 30
   delay: 2
-  until: _apiready.rc == 0
+  until: _apiready.resources is defined and (_apiready.resources | length) > 0
   changed_when: false
   when: "'primary' in group_names"
 
-- name: Add NVIDIA Network Operator repo
-  command: helm repo add nvidia-network-operator https://mellanox.github.io/network-operator
-  environment:
-    KUBECONFIG: /etc/kubernetes/admin.conf
-  changed_when: false
-  failed_when: false
+- name: Ensure NVIDIA Network Operator Helm repo configured
+  kubernetes.core.helm_repository:
+    name: nvidia-network-operator
+    repo_url: https://mellanox.github.io/network-operator
+    state: present
+    force_update: true
+    kubeconfig: /etc/kubernetes/admin.conf
   when: "'primary' in group_names"
 
-- name: Helm repo update
-  command: helm repo update
-  environment:
-    KUBECONFIG: /etc/kubernetes/admin.conf
-  changed_when: false
+- name: Install/upgrade Network Operator via Helm
+  kubernetes.core.helm:
+    name: network-operator
+    chart_ref: network-operator
+    chart_repo_url: https://mellanox.github.io/network-operator
+    chart_version: "{{ network_operator_chart_version | default(omit) }}"
+    release_namespace: network-operator
+    create_namespace: true
+    kubeconfig: /etc/kubernetes/admin.conf
+    wait: true
+    wait_timeout: 600
+    state: present
   when: "'primary' in group_names"
 
-- name: Install/upgrade Network Operator
-  command: >
-    helm upgrade --install network-operator nvidia-network-operator/network-operator
-    --namespace network-operator --create-namespace
-  environment:
-    KUBECONFIG: /etc/kubernetes/admin.conf
+- name: Wait for Network Operator deployment to be Available
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    namespace: network-operator
+    name: network-operator
+    kubeconfig: /etc/kubernetes/admin.conf
+    wait: true
+    wait_sleep: 10
+    wait_timeout: 600
+    wait_condition:
+      type: Available
+      status: "True"
   when: "'primary' in group_names"
-
-- name: Check if Network Operator deployment exists
-  shell: >
-    KUBECONFIG=/etc/kubernetes/admin.conf
-    kubectl -n network-operator get deploy network-operator -o name
-  register: _netop_deploy
-  changed_when: false
-  failed_when: false
-  when: "'primary' in group_names"
-
-- name: Wait for Network Operator deployment to be ready
-  shell: >
-    KUBECONFIG=/etc/kubernetes/admin.conf
-    kubectl -n network-operator rollout status deploy/network-operator --timeout=5m
-  changed_when: false
-  failed_when: false
-  when:
-    - "'primary' in group_names"
-    - >
-        _netop_deploy is defined and
-        _netop_deploy.rc == 0 and
-        ((_netop_deploy.stdout | default('')) | length) > 0
 
 # --- Optional: create a minimal NicClusterPolicy to enable RDMA & device plugins ---
 - name: Check if NicClusterPolicy CRD exists
-  shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl get crd nicclusterpolicies.mellanox.com
+  kubernetes.core.k8s_info:
+    api_version: apiextensions.k8s.io/v1
+    kind: CustomResourceDefinition
+    name: nicclusterpolicies.mellanox.com
+    kubeconfig: /etc/kubernetes/admin.conf
   register: _ncp_crd
   failed_when: false
-  changed_when: false
   when: "'primary' in group_names"
 
 - name: Check if a NicClusterPolicy already exists
-  shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl get nicclusterpolicy -A -o name
+  kubernetes.core.k8s_info:
+    api_version: mellanox.com/v1alpha1
+    kind: NicClusterPolicy
+    kubeconfig: /etc/kubernetes/admin.conf
   register: _ncp_exists
   failed_when: false
-  changed_when: false
   when: "'primary' in group_names"
 
-
 - name: Apply minimal NicClusterPolicy (enable OFED, RDMA, device plugins) if none exists
-  copy:
-    dest: /tmp/nicclusterpolicy.yaml
-    mode: '0644'
-    content: |
+  kubernetes.core.k8s:
+    kubeconfig: /etc/kubernetes/admin.conf
+    state: present
+    definition:
       apiVersion: mellanox.com/v1alpha1
       kind: NicClusterPolicy
       metadata:
@@ -99,16 +100,9 @@
           deploy: false
   when:
     - "'primary' in group_names"
-    - _ncp_crd.rc == 0
-    - _ncp_exists.stdout is defined
-    - _ncp_exists.stdout | length == 0
-
-- name: kubectl apply NicClusterPolicy
-  shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl apply -f /tmp/nicclusterpolicy.yaml
-  when:
-    - "'primary' in group_names"
-    - _ncp_crd.rc == 0
-    - _ncp_exists.stdout is defined
-    - _ncp_exists.stdout | length == 0
-  changed_when: true
-  failed_when: false
+    - _ncp_crd is defined
+    - _ncp_crd.resources is defined
+    - _ncp_crd.resources | length > 0
+    - _ncp_exists is defined
+    - _ncp_exists.resources is defined
+    - _ncp_exists.resources | length == 0

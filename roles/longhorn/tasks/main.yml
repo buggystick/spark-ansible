@@ -11,12 +11,16 @@
     creates: /usr/local/bin/helm
   when: "'primary' in group_names"
 
-- name: Wait for API server (primary only)
-  shell: KUBECONFIG=/etc/kubernetes/admin.conf kubectl get --raw=/healthz
+- name: Wait for API server by listing default Namespace (primary only)
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+    name: default
+    kubeconfig: /etc/kubernetes/admin.conf
   register: _apiready
   retries: 30
   delay: 2
-  until: _apiready.rc == 0
+  until: _apiready.resources is defined and (_apiready.resources | length) > 0
   changed_when: false
   when: "'primary' in group_names"
 
@@ -37,27 +41,24 @@
   become: true
 
 # Helm repo + install
-- name: Add Longhorn repo (primary only)
-  command: helm repo add longhorn https://charts.longhorn.io
-  environment:
-    KUBECONFIG: /etc/kubernetes/admin.conf
-  changed_when: false
-  failed_when: false
+- name: Ensure Longhorn Helm repo configured (primary only)
+  kubernetes.core.helm_repository:
+    name: longhorn
+    repo_url: https://charts.longhorn.io
+    state: present
+    force_update: true
+    kubeconfig: /etc/kubernetes/admin.conf
   when: "'primary' in group_names"
 
-- name: Update Helm repos (primary only)
-  command: helm repo update
-  environment:
-    KUBECONFIG: /etc/kubernetes/admin.conf
-  changed_when: false
-  when: "'primary' in group_names"
-
-- name: Create namespace (primary only)
-  command: kubectl create ns longhorn-system
-  environment:
-    KUBECONFIG: /etc/kubernetes/admin.conf
-  failed_when: false
-  changed_when: false
+- name: Ensure longhorn-system namespace exists (primary only)
+  kubernetes.core.k8s:
+    kubeconfig: /etc/kubernetes/admin.conf
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: longhorn-system
   when: "'primary' in group_names"
 
 - name: Copy Longhorn Helm values (primary only)
@@ -67,30 +68,49 @@
     mode: '0644'
   when: "'primary' in group_names"
 
-- name: Install/upgrade Longhorn (primary only)
-  command: >
-    helm upgrade --install longhorn longhorn/longhorn
-    --namespace longhorn-system
-    --values /tmp/longhorn-values.yaml
-  environment:
-    KUBECONFIG: /etc/kubernetes/admin.conf
+- name: Install/upgrade Longhorn via Helm (primary only)
+  kubernetes.core.helm:
+    name: longhorn
+    chart_ref: longhorn
+    chart_repo_url: https://charts.longhorn.io
+    release_namespace: longhorn-system
+    create_namespace: false
+    values_files:
+      - /tmp/longhorn-values.yaml
+    kubeconfig: /etc/kubernetes/admin.conf
+    wait: true
+    wait_timeout: 1200
+    state: present
   when: "'primary' in group_names"
 
 # Wait for core Longhorn components to be ready
-- name: Wait for longhorn-manager DaemonSet (primary only)
-  shell: >
-    KUBECONFIG=/etc/kubernetes/admin.conf
-    kubectl -n longhorn-system rollout status ds/longhorn-manager --timeout=10m
+- name: Wait for longhorn-manager DaemonSet to be ready (primary only)
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: DaemonSet
+    namespace: longhorn-system
+    name: longhorn-manager
+    kubeconfig: /etc/kubernetes/admin.conf
+  register: _lh_mgr
+  until: _lh_mgr.resources | length > 0 and ((_lh_mgr.resources[0].status.numberReady | default(0)) >= (_lh_mgr.resources[0].status.desiredNumberScheduled | default(0)))
+  retries: 60
+  delay: 10
   changed_when: false
-  failed_when: false
   when: "'primary' in group_names"
 
-- name: Wait for longhorn-driver-deployer Deployment (primary only)
-  shell: >
-    KUBECONFIG=/etc/kubernetes/admin.conf
-    kubectl -n longhorn-system rollout status deploy/longhorn-driver-deployer --timeout=10m
-  changed_when: false
-  failed_when: false
+- name: Wait for longhorn-driver-deployer Deployment to be Available (primary only)
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    namespace: longhorn-system
+    name: longhorn-driver-deployer
+    kubeconfig: /etc/kubernetes/admin.conf
+    wait: true
+    wait_sleep: 10
+    wait_timeout: 1200
+    wait_condition:
+      type: Available
+      status: "True"
   when: "'primary' in group_names"
 
 - name: Copy Longhorn StorageClass manifest (primary only)
@@ -102,10 +122,10 @@
   run_once: true
 
 - name: Ensure Longhorn StorageClass exists (primary only)
-  command: kubectl apply -f /tmp/longhorn-storageclass.yaml
-  environment:
-    KUBECONFIG: /etc/kubernetes/admin.conf
-  register: _longhorn_sc_apply
-  changed_when: "'created' in _longhorn_sc_apply.stdout or 'configured' in _longhorn_sc_apply.stdout"
+  kubernetes.core.k8s:
+    kubeconfig: /etc/kubernetes/admin.conf
+    state: present
+    src: /tmp/longhorn-storageclass.yaml
+    apply: yes
   when: "'primary' in group_names"
   run_once: true
