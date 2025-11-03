@@ -103,14 +103,19 @@
       register: _all_crds
       failed_when: false
 
-    - name: Build list of CRDs for Longhorn, Cilium, Traefik, NVIDIA, Mellanox (best effort)
+    - name: Build per-product CRD lists (best effort)
       set_fact:
         _longhorn_crds: "{{ (_all_crds.resources | default([])) | selectattr('spec.group','equalto','longhorn.io') | map(attribute='metadata.name') | list }}"
         _cilium_crds: "{{ (_all_crds.resources | default([])) | selectattr('spec.group','equalto','cilium.io') | map(attribute='metadata.name') | list }}"
         _traefik_crds: "{{ (_all_crds.resources | default([])) | selectattr('spec.group','equalto','traefik.containo.us') | map(attribute='metadata.name') | list }}"
         _mellanox_crds: "{{ (_all_crds.resources | default([])) | selectattr('spec.group','equalto','mellanox.com') | map(attribute='metadata.name') | list }}"
         _nvidia_crds: "{{ (_all_crds.resources | default([])) | selectattr('spec.group','equalto','nvidia.com') | map(attribute='metadata.name') | list }}"
-        _crds_to_delete: "{{ (_longhorn_crds + _cilium_crds + _traefik_crds + _mellanox_crds + _nvidia_crds) | unique }}"
+      failed_when: false
+
+    - name: Build combined CRD deletion list (best effort)
+      set_fact:
+        _crds_to_delete: "{{ ((_longhorn_crds | default([])) + (_cilium_crds | default([])) + (_traefik_crds | default([])) + (_mellanox_crds | default([])) + (_nvidia_crds | default([]))) | unique }}"
+      failed_when: false
 
     - name: Delete selected CRDs (best effort)
       kubernetes.core.k8s:
