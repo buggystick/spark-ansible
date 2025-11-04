@@ -3,8 +3,15 @@
 # Idempotent install/upgrade of NVIDIA Network Operator via Helm, using admin.conf
 # Optionally applies a minimal NicClusterPolicy if CRD exists and no policy present.
 
-- name: Install Helm
-  shell: curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+- name: Ensure Helm installer script is present (primary only)
+  copy:
+    src: get-helm-3.sh
+    dest: /tmp/get-helm-3.sh
+    mode: '0755'
+  when: "'primary' in group_names"
+
+- name: Install Helm (primary only)
+  command: bash /tmp/get-helm-3.sh
   args:
     creates: /usr/local/bin/helm
   when: "'primary' in group_names"

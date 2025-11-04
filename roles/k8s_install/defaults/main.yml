@@ -1,9 +1,17 @@
 ---
-# Default variables for the Kubernetes role.
-# Controls Traefik ingress controller deployment.
+# Default variables for the Kubernetes install role.
+# Controls Traefik ingress controller deployment and common K8s settings.
 
 k8s_install_traefik: true
 
+# Kubernetes channel for apt repo
+k8s_channel: v1.30
+
+# CNI/Ingress chart versions
+k8s_cilium_chart_version: 1.18.3
+k8s_traefik_chart_version: "37.2.0"
+
+# Traefik values
 traefik_namespace: traefik
 traefik_chart_version: ""
 traefik_service_type: NodePort

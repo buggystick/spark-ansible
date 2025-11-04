@@ -4,20 +4,24 @@ ports:
     expose:
       default: true
     exposedPort: 80
-    nodePort: 32080
+    protocol: TCP
   websecure:
     port: 8443
     expose:
       default: true
     exposedPort: 443
-    nodePort: 32443
-  dashboard:
+    protocol: TCP
+  traefik:
+    port: 9000
     expose:
       default: false
 
 service:
   enabled: true
-  type: "NodePort"
+  type: NodePort
+  nodePorts:
+    web: 32080
+    websecure: 32443
 
 ingressRoute:
   dashboard:

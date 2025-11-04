@@ -1,23 +1,31 @@
+# Uninstall pass: if k8s_uninstall=true, run uninstall role first to purge and end host
 - hosts: all
   become: yes
   roles:
-    - k8s
+    - { role: k8s_uninstall, when: k8s_uninstall | default(false) | bool }
+
+# Install/Configure pass
+- hosts: all
+  become: yes
+  roles:
+    - { role: k8s_install, when: not (k8s_uninstall | default(false) | bool) }
+
+# Post-install components (only apply if cluster exists; if uninstall ran, end_host prevents further roles)
+- hosts: primary
+  become: yes
+  roles:
+    - { role: nvidia_gpu_operator, when: not (k8s_uninstall | default(false) | bool) }
+    - { role: nvidia_net_operator, when: not (k8s_uninstall | default(false) | bool) }
+    - { role: longhorn, when: not (k8s_uninstall | default(false) | bool) }
 
 - hosts: primary
   become: yes
   roles:
-    - nvidia_gpu_operator
-    - nvidia_net_operator
-    - longhorn
+    - { role: trtllm_build, tags: ['trtllm_build','build'], when: not (k8s_uninstall | default(false) | bool) }
 
 - hosts: primary
   become: yes
   roles:
-    - { role: trtllm_build, tags: ['trtllm_build','build'] }
-
-- hosts: primary
-  become: yes
-  roles:
-    - triton_trtllm
-    - openai_proxy
-    - openwebui
+    - { role: triton_trtllm, when: not (k8s_uninstall | default(false) | bool) }
+    - { role: openai_proxy, when: not (k8s_uninstall | default(false) | bool) }
+    - { role: openwebui, when: not (k8s_uninstall | default(false) | bool) }
