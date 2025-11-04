@@ -19,7 +19,7 @@
     - { role: nvidia_gpu_operator, when: not (k8s_uninstall | default(false) | bool) }
     - { role: nvidia_net_operator, when: not (k8s_uninstall | default(false) | bool) }
     - {
-        role: githubixx.traefik_kubernetes,
+        role: traefik,
         when: not (k8s_uninstall | default(false) | bool),
         tags: ['traefik']
       }

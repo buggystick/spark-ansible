@@ -1,0 +1,45 @@
+---
+- name: Ensure Traefik namespace exists
+  kubernetes.core.k8s:
+    api_version: v1
+    kind: Namespace
+    name: "{{ traefik_namespace }}"
+    state: present
+    kubeconfig: "{{ traefik_kubeconfig }}"
+
+- name: Add Traefik Helm repository
+  kubernetes.core.helm_repository:
+    name: "{{ traefik_chart_repo_name }}"
+    repo_url: "{{ traefik_chart_repo_url }}"
+    state: present
+    kubeconfig: "{{ traefik_kubeconfig }}"
+  register: traefik_repo
+  changed_when: traefik_repo.changed | default(false)
+  failed_when: >-
+    traefik_repo.failed and
+    (
+      'already have a repository named'
+      not in (traefik_repo.msg | default('') | lower)
+    )
+
+- name: Deploy Traefik via Helm
+  kubernetes.core.helm:
+    name: "{{ traefik_release_name }}"
+    chart_ref: "{{ traefik_chart_repo_name }}/{{ traefik_chart_name }}"
+    chart_version: "{{ traefik_chart_version }}"
+    release_namespace: "{{ traefik_namespace }}"
+    create_namespace: false
+    kubeconfig: "{{ traefik_kubeconfig }}"
+    state: present
+    values:
+      service:
+        type: "{{ traefik_service_type }}"
+        nodePorts:
+          web: "{{ traefik_web_node_port }}"
+          websecure: "{{ traefik_websecure_node_port }}"
+  register: traefik_release
+
+- name: Show Traefik Helm status when changed
+  debug:
+    var: traefik_release
+  when: traefik_release is changed
