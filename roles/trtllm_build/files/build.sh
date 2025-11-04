@@ -107,5 +107,18 @@ else
   exit 42
 fi
 
-python3 -m pip install tqdm tqdm-loggable
+# Ensure required Python deps are present without downgrading TensorRT-LLM pins.
+# - tqdm / tqdm-loggable: nice-to-have progress bars for build.py
+# - huggingface_hub: required for fetching checkpoints
+# - transformers==4.55.0: TensorRT-LLM 1.1.0rc3 hard-pins this version; some
+#   optional extras (e.g., nvidia-modelopt[hf]) may pull older releases.
+python3 -m pip install \
+  --upgrade \
+  --upgrade-strategy eager \
+  --no-cache-dir \
+  'tqdm>=4.66.0' \
+  'tqdm-loggable>=0.2' \
+  'huggingface_hub>=0.24.0,<1.0.0' \
+  'transformers==4.55.0'
+
 python3 /opt/trtllm/build.py "$@"
