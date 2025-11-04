@@ -30,6 +30,36 @@
     state: present
     update_cache: yes
 
+# ------- Kubernetes APT repo + packages -------
+- name: Ensure /etc/apt/keyrings exists
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: '0755'
+
+- name: Add Kubernetes apt signing key
+  ansible.builtin.apt_key:
+    url: "https://pkgs.k8s.io/core:/stable:/{{ k8s_channel }}/deb/Release.key"
+    state: present
+    keyring: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+
+- name: Add Kubernetes apt repository
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/{{ k8s_channel }}/deb/ /"
+    filename: kubernetes
+    state: present
+    update_cache: yes
+
+- name: Install kubelet, kubeadm, kubectl
+  apt:
+    name:
+      - kubelet
+      - kubeadm
+      - kubectl
+    state: present
+    update_cache: yes
+
+
 # ------- Containerd + CRI (known-good config) -------
 - name: Install containerd and cri-tools
   apt:
@@ -147,35 +177,6 @@
     path: /etc/fstab
     regexp: '^([^#].*\\sswap\\s.*)$'
     replace: '# \\1'
-
-# ------- Kubernetes APT repo + packages -------
-- name: Ensure /etc/apt/keyrings exists
-  ansible.builtin.file:
-    path: /etc/apt/keyrings
-    state: directory
-    mode: '0755'
-
-- name: Add Kubernetes apt signing key
-  ansible.builtin.apt_key:
-    url: "https://pkgs.k8s.io/core:/stable:/{{ k8s_channel }}/deb/Release.key"
-    state: present
-    keyring: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-
-- name: Add Kubernetes apt repository
-  ansible.builtin.apt_repository:
-    repo: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/{{ k8s_channel }}/deb/ /"
-    filename: kubernetes
-    state: present
-    update_cache: yes
-
-- name: Install kubelet, kubeadm, kubectl
-  apt:
-    name:
-      - kubelet
-      - kubeadm
-      - kubectl
-    state: present
-    update_cache: yes
 
 - name: Enable kubelet
   systemd:
@@ -406,7 +407,7 @@
     create_namespace: false
     kubeconfig: /etc/kubernetes/admin.conf
     wait: true
-    wait_timeout: 600
+    wait_timeout: "600s"
     state: present
   when: "'primary' in group_names"
 
@@ -466,7 +467,7 @@
           - /tmp/traefik-values.yaml
         kubeconfig: /etc/kubernetes/admin.conf
         wait: true
-        wait_timeout: 600
+        wait_timeout: "600s"
         state: present
 
     - name: Wait for Traefik deployment to be ready
