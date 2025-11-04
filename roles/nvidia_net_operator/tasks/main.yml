@@ -87,7 +87,27 @@
   failed_when: false
   when: "'primary' in group_names"
 
-- name: Apply minimal NicClusterPolicy (enable OFED, RDMA, device plugins) if none exists
+- name: Validate NicClusterPolicy variables when apply is enabled
+  assert:
+    that:
+      - nvidia_net_ofed_repository | length > 0
+      - nvidia_net_ofed_image | length > 0
+      - nvidia_net_ofed_version | length > 0
+      - nvidia_net_device_plugin_repository | length > 0
+      - nvidia_net_device_plugin_image | length > 0
+      - nvidia_net_device_plugin_version | length > 0
+      - nvidia_net_rdma_sdp_repository | length > 0
+      - nvidia_net_rdma_sdp_image | length > 0
+      - nvidia_net_rdma_sdp_version | length > 0
+      - nvidia_net_sriov_dp_repository | length > 0
+      - nvidia_net_sriov_dp_image | length > 0
+      - nvidia_net_sriov_dp_version | length > 0
+    fail_msg: "Set all required NicClusterPolicy image variables or disable nvidia_net_operator_apply_nicclusterpolicy"
+  when:
+    - "'primary' in group_names"
+    - nvidia_net_operator_apply_nicclusterpolicy | bool
+
+- name: Apply NicClusterPolicy (enable OFED, RDMA, device plugins) if none exists and enabled
   kubernetes.core.k8s:
     kubeconfig: /etc/kubernetes/admin.conf
     state: present
@@ -99,14 +119,27 @@
       spec:
         ofedDriver:
           deploy: true
+          repository: "{{ nvidia_net_ofed_repository }}"
+          image: "{{ nvidia_net_ofed_image }}"
+          version: "{{ nvidia_net_ofed_version }}"
         devicePlugin:
           deploy: true
+          repository: "{{ nvidia_net_device_plugin_repository }}"
+          image: "{{ nvidia_net_device_plugin_image }}"
+          version: "{{ nvidia_net_device_plugin_version }}"
         rdmaSharedDevicePlugin:
           deploy: true
+          repository: "{{ nvidia_net_rdma_sdp_repository }}"
+          image: "{{ nvidia_net_rdma_sdp_image }}"
+          version: "{{ nvidia_net_rdma_sdp_version }}"
         sriovDevicePlugin:
           deploy: false
+          repository: "{{ nvidia_net_sriov_dp_repository }}"
+          image: "{{ nvidia_net_sriov_dp_image }}"
+          version: "{{ nvidia_net_sriov_dp_version }}"
   when:
     - "'primary' in group_names"
+    - nvidia_net_operator_apply_nicclusterpolicy | bool
     - _ncp_crd is defined
     - _ncp_crd.resources is defined
     - _ncp_crd.resources | length > 0

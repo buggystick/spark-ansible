@@ -1,0 +1,27 @@
+# Default variables for nvidia_net_operator role
+# By default, do NOT auto-apply NicClusterPolicy. Enable only if you provide correct images.
+nvidia_net_operator_apply_nicclusterpolicy: false
+
+# Required images for NicClusterPolicy when applying it. These must be set by the user to
+# values compatible with the installed Network Operator version/cluster.
+# Example values will be provided in the role documentation or playbook vars.
+
+# OFED driver
+nvidia_net_ofed_repository: ""
+nvidia_net_ofed_image: ""
+nvidia_net_ofed_version: ""
+
+# NVIDIA device plugin (k8s device plugin)
+nvidia_net_device_plugin_repository: ""
+nvidia_net_device_plugin_image: ""
+nvidia_net_device_plugin_version: ""
+
+# RDMA Shared Device Plugin
+nvidia_net_rdma_sdp_repository: ""
+nvidia_net_rdma_sdp_image: ""
+nvidia_net_rdma_sdp_version: ""
+
+# SR-IOV Network Device Plugin (often optional; still required by CR validation)
+nvidia_net_sriov_dp_repository: ""
+nvidia_net_sriov_dp_image: ""
+nvidia_net_sriov_dp_version: ""
