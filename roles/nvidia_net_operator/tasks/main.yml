@@ -87,25 +87,50 @@
   failed_when: false
   when: "'primary' in group_names"
 
-- name: Validate NicClusterPolicy variables when apply is enabled
-  assert:
-    that:
-      - nvidia_net_ofed_repository | length > 0
-      - nvidia_net_ofed_image | length > 0
-      - nvidia_net_ofed_version | length > 0
-      - nvidia_net_device_plugin_repository | length > 0
-      - nvidia_net_device_plugin_image | length > 0
-      - nvidia_net_device_plugin_version | length > 0
-      - nvidia_net_rdma_sdp_repository | length > 0
-      - nvidia_net_rdma_sdp_image | length > 0
-      - nvidia_net_rdma_sdp_version | length > 0
-      - nvidia_net_sriov_dp_repository | length > 0
-      - nvidia_net_sriov_dp_image | length > 0
-      - nvidia_net_sriov_dp_version | length > 0
-    fail_msg: "Set all required NicClusterPolicy image variables or disable nvidia_net_operator_apply_nicclusterpolicy"
+- name: Gather NicClusterPolicy variable completeness information
+  set_fact:
+    nvidia_net_operator_missing_nicclusterpolicy_vars: "{{ _ncp_required_vars | selectattr('value', 'equalto', '') | map(attribute='name') | list }}"
+  vars:
+    _ncp_required_vars:
+      - name: nvidia_net_ofed_repository
+        value: "{{ (nvidia_net_ofed_repository | default('')) | string | trim }}"
+      - name: nvidia_net_ofed_image
+        value: "{{ (nvidia_net_ofed_image | default('')) | string | trim }}"
+      - name: nvidia_net_ofed_version
+        value: "{{ (nvidia_net_ofed_version | default('')) | string | trim }}"
+      - name: nvidia_net_device_plugin_repository
+        value: "{{ (nvidia_net_device_plugin_repository | default('')) | string | trim }}"
+      - name: nvidia_net_device_plugin_image
+        value: "{{ (nvidia_net_device_plugin_image | default('')) | string | trim }}"
+      - name: nvidia_net_device_plugin_version
+        value: "{{ (nvidia_net_device_plugin_version | default('')) | string | trim }}"
+      - name: nvidia_net_rdma_sdp_repository
+        value: "{{ (nvidia_net_rdma_sdp_repository | default('')) | string | trim }}"
+      - name: nvidia_net_rdma_sdp_image
+        value: "{{ (nvidia_net_rdma_sdp_image | default('')) | string | trim }}"
+      - name: nvidia_net_rdma_sdp_version
+        value: "{{ (nvidia_net_rdma_sdp_version | default('')) | string | trim }}"
+      - name: nvidia_net_sriov_dp_repository
+        value: "{{ (nvidia_net_sriov_dp_repository | default('')) | string | trim }}"
+      - name: nvidia_net_sriov_dp_image
+        value: "{{ (nvidia_net_sriov_dp_image | default('')) | string | trim }}"
+      - name: nvidia_net_sriov_dp_version
+        value: "{{ (nvidia_net_sriov_dp_version | default('')) | string | trim }}"
   when:
     - "'primary' in group_names"
     - nvidia_net_operator_apply_nicclusterpolicy | bool
+  changed_when: false
+
+- name: Fail when NicClusterPolicy variables are missing but apply is enabled
+  fail:
+    msg: >-
+      nvidia_net_operator_apply_nicclusterpolicy is true but the following variables are empty:
+      {{ (nvidia_net_operator_missing_nicclusterpolicy_vars | default([])) | join(', ') }}.
+      Provide valid image repository, image, and version values or disable NicClusterPolicy auto-apply.
+  when:
+    - "'primary' in group_names"
+    - nvidia_net_operator_apply_nicclusterpolicy | bool
+    - (nvidia_net_operator_missing_nicclusterpolicy_vars | default([])) | length > 0
 
 - name: Apply NicClusterPolicy (enable OFED, RDMA, device plugins) if none exists and enabled
   kubernetes.core.k8s:
@@ -146,3 +171,4 @@
     - _ncp_exists is defined
     - _ncp_exists.resources is defined
     - _ncp_exists.resources | length == 0
+    - (nvidia_net_operator_missing_nicclusterpolicy_vars | default([])) | length == 0
