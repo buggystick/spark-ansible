@@ -1,5 +1,11 @@
 helm_version: v3.15.2
 
+# Traefik (via githubixx.traefik_kubernetes)
+traefik_namespace: traefik
+traefik_service_type: NodePort
+traefik_web_node_port: 32080
+traefik_websecure_node_port: 32443
+
 models:
   - name: qwen235b_fp4
     hf_id: "nvidia/Qwen3-235B-A22B-FP4"

@@ -42,7 +42,7 @@
   kubernetes.core.helm:
     name: network-operator
     chart_ref: network-operator
-    chart_repo_url: https://mellanox.github.io/network-operator
+    chart_repo_url: https://helm.ngc.nvidia.com/nvidia
     chart_version: "{{ network_operator_chart_version | default(omit) }}"
     release_namespace: network-operator
     create_namespace: true

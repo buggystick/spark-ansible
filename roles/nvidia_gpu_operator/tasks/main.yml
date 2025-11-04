@@ -31,7 +31,7 @@
 - name: Ensure NVIDIA GPU Operator Helm repo configured
   kubernetes.core.helm_repository:
     name: nvidia
-    repo_url: https://nvidia.github.io/gpu-operator
+    repo_url: https://helm.ngc.nvidia.com/nvidia
     state: present
     force_update: true
     kubeconfig: /etc/kubernetes/admin.conf

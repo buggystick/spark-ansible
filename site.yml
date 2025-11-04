@@ -8,7 +8,7 @@
 - hosts: all
   become: yes
   roles:
-    - { role: k8s_install, when: not (k8s_uninstall | default(false) | bool) }
+    - { role: k8s_install, when: not (k8s_uninstall | default(false) | bool), k8s_install_traefik: false }
 
 # Post-install components (only apply if cluster exists; if uninstall ran, end_host prevents further roles)
 - hosts: primary
@@ -16,6 +16,15 @@
   roles:
     - { role: nvidia_gpu_operator, when: not (k8s_uninstall | default(false) | bool) }
     - { role: nvidia_net_operator, when: not (k8s_uninstall | default(false) | bool) }
+    - {
+        role: githubixx.traefik_kubernetes,
+        when: not (k8s_uninstall | default(false) | bool),
+        tags: ['traefik'],
+        traefik_namespace: "{{ traefik_namespace | default('traefik') }}",
+        traefik_service_type: "{{ traefik_service_type | default('NodePort') }}",
+        traefik_web_node_port: "{{ traefik_web_node_port | default(32080) }}",
+        traefik_websecure_node_port: "{{ traefik_websecure_node_port | default(32443) }}"
+      }
     - { role: longhorn, when: not (k8s_uninstall | default(false) | bool) }
 
 - hosts: primary
