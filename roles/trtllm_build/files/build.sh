@@ -110,15 +110,21 @@ fi
 # Ensure required Python deps are present without downgrading TensorRT-LLM pins.
 # - tqdm / tqdm-loggable: nice-to-have progress bars for build.py
 # - huggingface_hub: required for fetching checkpoints
-# - transformers==4.55.0: TensorRT-LLM 1.1.0rc3 hard-pins this version; some
-#   optional extras (e.g., nvidia-modelopt[hf]) may pull older releases.
+# - TensorRT-LLM 1.2.0rc1 requires very specific versions for core ML deps; the
+#   resolver otherwise drags in bleeding-edge releases that violate those caps.
 python3 -m pip install \
   --upgrade \
   --upgrade-strategy eager \
   --no-cache-dir \
+  'datasets==3.1.0' \
+  'numpy==1.26.4' \
+  'nvidia-modelopt[torch]==0.33.0' \
+  'pillow==10.3.0' \
+  'setuptools<80' \
+  'torch==2.8.0' \
   'tqdm>=4.66.0' \
   'tqdm-loggable>=0.2' \
   'huggingface_hub>=0.24.0,<1.0.0' \
-  'transformers==4.55.0'
+  'transformers==4.56.0'
 
 python3 /opt/trtllm/build.py "$@"
