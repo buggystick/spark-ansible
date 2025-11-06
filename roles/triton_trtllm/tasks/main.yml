@@ -23,7 +23,7 @@
         accessModes: [ "ReadWriteMany" ]
         resources:
           requests:
-            storage: 200Gi
+            storage: 2000Gi
         storageClassName: longhorn
 
 - name: Apply Triton Service manifest

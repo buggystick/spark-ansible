@@ -107,37 +107,4 @@ else
   exit 42
 fi
 
-# Ensure required Python deps are present without downgrading TensorRT-LLM pins.
-# - tqdm / tqdm-loggable: nice-to-have progress bars for build.py
-# - huggingface_hub: required for fetching checkpoints
-# - TensorRT-LLM 1.2.0rc1 requires very specific versions for core ML deps; the
-#   resolver otherwise drags in bleeding-edge releases that violate those caps.
-COMMON_PIP_ARGS=(
-  --upgrade
-  --upgrade-strategy eager
-  --no-cache-dir
-)
-
-python3 -m pip install "${COMMON_PIP_ARGS[@]}" \
-  'datasets==3.1.0' \
-  'numpy==1.26.4' \
-  'pillow==10.3.0' \
-  'setuptools<80' \
-  'torch==2.8.0' \
-  'tqdm>=4.66.0' \
-  'tqdm-loggable>=0.2' \
-  'huggingface_hub>=0.24.0,<1.0.0' \
-  'transformers==4.56.0'
-
-# TensorRT-LLM 1.2.0rc1 insists on ModelOpt ~=0.33.0. The optional [hf] extra for
-# that release requires transformers<4.54, which conflicts with TRT-LLM's own
-# 4.56.0 pin. Install the core package along with the handful of Hugging
-# Face-oriented utilities that the extra would have provided, but keep
-# transformers at the version mandated by TRT-LLM.
-python3 -m pip install "${COMMON_PIP_ARGS[@]}" \
-  'nvidia-modelopt==0.33.0' \
-  'accelerate<1.2.0' \
-  'safetensors>=0.4.3,<1.0.0' \
-  'sentencepiece>=0.1.99'
-
 python3 /opt/trtllm/build.py "$@"

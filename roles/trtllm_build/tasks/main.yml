@@ -26,7 +26,7 @@
         accessModes: [ "ReadWriteMany" ]
         resources:
           requests:
-            storage: 200Gi
+            storage: 2000Gi
         storageClassName: longhorn
 
 - name: Ensure Hugging Face token secret if provided
