@@ -280,6 +280,60 @@ def resolve_checkpoint(hf_id: str, model_name: str) -> str:
 
 
 # ==============================================================================
+# TensorRT-LLM config helpers
+# ==============================================================================
+
+
+def ensure_architecture_field(checkpoint_dir: str, model_name: str) -> None:
+    """Ensure the checkpoint config.json has the TRT-LLM 'architecture' key."""
+
+    cfg_path = Path(checkpoint_dir) / "config.json"
+    if not cfg_path.is_file():
+        log(
+            f"[{model_name}] config.json not found at {cfg_path}; skipping architecture fix."
+        )
+        return
+
+    try:
+        cfg = json.loads(cfg_path.read_text())
+    except Exception as exc:  # pragma: no cover - best effort logging
+        log(f"[{model_name}] Failed to parse {cfg_path}: {exc}; leaving untouched.")
+        return
+
+    if "architecture" in cfg:
+        return
+
+    arch = None
+    architectures = cfg.get("architectures")
+    if isinstance(architectures, list) and architectures:
+        first = architectures[0]
+        if isinstance(first, str) and first.strip():
+            arch = first.strip()
+
+    if arch is None:
+        model_type = cfg.get("model_type")
+        if isinstance(model_type, str) and model_type.strip():
+            arch = model_type.strip()
+
+    if arch is None:
+        log(
+            f"[{model_name}] Unable to infer architecture from config.json; TRT-LLM may fail."
+        )
+        return
+
+    cfg["architecture"] = arch
+    try:
+        cfg_path.write_text(json.dumps(cfg, indent=2, sort_keys=True) + "\n")
+    except Exception as exc:  # pragma: no cover - best effort logging
+        log(f"[{model_name}] Failed to write updated {cfg_path}: {exc}")
+        return
+
+    log(
+        f"[{model_name}] Added missing 'architecture'={arch!r} to {cfg_path} for TRT-LLM."
+    )
+
+
+# ==============================================================================
 # Main build
 # ==============================================================================
 
@@ -352,6 +406,8 @@ def main() -> None:
         log(f"[{idx}/{len(models_to_build)}] Resolving checkpoint for {name} ({hf_id})…")
         checkpoint_dir = resolve_checkpoint(hf_id, name)
         log(f"[{idx}/{len(models_to_build)}] Checkpoint directory: {checkpoint_dir}")
+
+        ensure_architecture_field(checkpoint_dir, name)
 
         # Disk space before
         try:
