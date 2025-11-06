@@ -319,26 +319,27 @@ def _candidate_architectures(cfg: dict) -> list[str]:
     seen: set[str] = set()
     candidates: list[str] = []
 
-    arch = cfg.get("architecture")
-    if isinstance(arch, str) and arch:
-        seen.add(arch)
-        candidates.append(arch)
+    def _push(item: Optional[str]) -> None:
+        if isinstance(item, str) and item and item not in seen:
+            seen.add(item)
+            candidates.append(item)
+
+    _push(cfg.get("architecture"))
 
     architectures = cfg.get("architectures")
     if isinstance(architectures, list):
         for item in architectures:
-            if isinstance(item, str) and item and item not in seen:
-                seen.add(item)
-                candidates.append(item)
+            _push(item if isinstance(item, str) else None)
 
     auto_map = cfg.get("auto_map")
     if isinstance(auto_map, dict):
         for value in auto_map.values():
-            if isinstance(value, str) and value:
-                candidate = value.split(".")[-1]
-                if candidate and candidate not in seen:
-                    seen.add(candidate)
-                    candidates.append(candidate)
+            if isinstance(value, str):
+                _push(value.split(".")[-1])
+            elif isinstance(value, (list, tuple)):
+                for entry in value:
+                    if isinstance(entry, str):
+                        _push(entry.split(".")[-1])
 
     return candidates
 
@@ -346,61 +347,102 @@ def _candidate_architectures(cfg: dict) -> list[str]:
 def _guess_supported_architecture(cfg: dict, known: set[str]) -> Optional[str]:
     known_by_lower = {item.lower(): item for item in known}
 
+    def _prefix_variants(prefix: str) -> set[str]:
+        variants: set[str] = set()
+        stack = [prefix]
+        while stack:
+            current = stack.pop()
+            if not current or current in variants:
+                continue
+            variants.add(current)
+
+            trimmed = current.rstrip("-_ ")
+            if trimmed != current:
+                stack.append(trimmed)
+
+            without_digits = current.rstrip("0123456789")
+            if without_digits != current:
+                stack.append(without_digits)
+
+            without_upper = current.rstrip("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+            if without_upper != current:
+                stack.append(without_upper)
+
+            without_h = current.rstrip("Hh")
+            if without_h != current:
+                stack.append(without_h)
+
+            if "-" in current:
+                stack.append(current.rsplit("-", 1)[0])
+            if "_" in current:
+                stack.append(current.rsplit("_", 1)[0])
+        return variants
+
+    def _candidate_variants(candidate: str) -> Iterable[str]:
+        yielded: set[str] = set()
+
+        def _emit(value: str) -> None:
+            if value and value not in yielded:
+                yielded.add(value)
+                yield_queue.append(value)
+
+        yield_queue: list[str] = []
+        _emit(candidate)
+
+        while yield_queue:
+            current = yield_queue.pop(0)
+            yield current
+
+            collapsed = current.replace("-", "").replace("_", "")
+            if collapsed != current:
+                _emit(collapsed)
+
+            if "For" in current:
+                prefix, suffix = current.split("For", 1)
+                suffix = "For" + suffix
+                for pref_variant in _prefix_variants(prefix):
+                    _emit(pref_variant + suffix)
+
     def _canonical(candidate: str) -> Optional[str]:
-        if candidate in known:
-            return candidate
-        lowered = candidate.lower()
-        if lowered in known_by_lower:
-            canonical = known_by_lower[lowered]
-            if canonical != candidate:
-                log(
-                    "[patch-config] Normalizing architecture case %s -> %s for TensorRT"
-                    % (candidate, canonical)
-                )
-            return canonical
-        return None
-
-    def _normalize_candidate(candidate: str) -> Iterable[str]:
-        yield candidate
-        if "For" in candidate:
-            prefix, suffix = candidate.split("For", 1)
-            trimmed = prefix.rstrip("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ")
-            if trimmed and trimmed != prefix:
-                yield trimmed + "For" + suffix
-            # Handle nemotron-h naming specifically.
-            if prefix.endswith("H"):
-                yield prefix[:-1] + "For" + suffix
-
-    for cand in _candidate_architectures(cfg):
-        for normalized in _normalize_candidate(cand):
-            canonical = _canonical(normalized)
-            if canonical:
-                if canonical != cand:
+        for variant in _candidate_variants(candidate):
+            lowered = variant.lower()
+            if lowered in known_by_lower:
+                canonical = known_by_lower[lowered]
+                if canonical != candidate:
                     log(
                         "[patch-config] Mapping architecture %s -> %s for TensorRT compatibility"
-                        % (cand, canonical)
+                        % (candidate, canonical)
                     )
                 return canonical
+        return None
+
+    for cand in _candidate_architectures(cfg):
+        canonical = _canonical(cand)
+        if canonical:
+            return canonical
 
     model_type = cfg.get("model_type")
     if isinstance(model_type, str) and model_type:
-        mt = model_type.lower().rstrip("0123456789")
-        mt_base = mt.rstrip("h")
+        mt_lower = model_type.lower()
+        mt_simple = "".join(ch for ch in mt_lower if ch.isalnum())
+        mt_trimmed = mt_simple.rstrip("0123456789h")
         for candidate in known:
             cl = candidate.lower()
-            if mt and mt in cl:
+            cl_simple = "".join(ch for ch in cl if ch.isalnum())
+            if mt_simple and mt_simple in cl_simple:
                 log(
                     "[patch-config] Using architecture %s derived from model_type %s"
                     % (candidate, model_type)
                 )
                 return candidate
-            if mt_base and mt_base in cl:
+            if mt_trimmed and mt_trimmed in cl_simple:
                 log(
                     "[patch-config] Using architecture %s derived from model_type %s"
                     % (candidate, model_type)
                 )
                 return candidate
 
+    log("[patch-config] Unable to infer TensorRT architecture from config fields")
     return None
 
 
@@ -439,11 +481,12 @@ def _maybe_patch_config_for_tensorrt(checkpoint_dir: Path) -> None:
 
     model_type = cfg.get("model_type")
     if isinstance(model_type, str):
-        normalized_model_type = model_type.lower().rstrip("0123456789")
-        if normalized_model_type.endswith("h"):
+        normalized_model_type = model_type.strip().lower()
+        if normalized_model_type.endswith("-h"):
+            normalized_model_type = normalized_model_type[:-2]
+        elif normalized_model_type.endswith("h") and normalized_model_type[-2:-1].isdigit():
             normalized_model_type = normalized_model_type[:-1]
-        normalized_model_type = normalized_model_type or model_type
-        if normalized_model_type != model_type:
+        if normalized_model_type and normalized_model_type != model_type:
             cfg["model_type"] = normalized_model_type
             changed = True
 
