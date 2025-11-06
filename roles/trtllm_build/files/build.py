@@ -280,6 +280,166 @@ def resolve_checkpoint(hf_id: str, model_name: str) -> str:
 
 
 # ==============================================================================
+# TRT-LLM compatibility helpers
+# ==============================================================================
+
+def _known_trt_architectures() -> set[str]:
+    """Best-effort set of TensorRT-LLM architecture names."""
+
+    try:
+        from tensorrt_llm.models.modeling_utils import MODEL_MAP  # type: ignore
+
+        return set(MODEL_MAP.keys())
+    except Exception:
+        # Fallback for environments where tensorrt_llm is unavailable (e.g., CI lint).
+        return {
+            "GPTForCausalLM",
+            "GPTJForCausalLM",
+            "GPTNeoXForCausalLM",
+            "LLaMAForCausalLM",
+            "LLaMAForConditionalGeneration",
+            "MPTForCausalLM",
+            "MPTForConditionalGeneration",
+            "MistralForCausalLM",
+            "MixtralForCausalLM",
+            "NemotronForCausalLM",
+            "NemotronForConditionalGeneration",
+            "PhiForCausalLM",
+            "Phi3ForCausalLM",
+            "FalconForCausalLM",
+            "QWenForCausalLM",
+            "QWen2ForCausalLM",
+            "GemmaForCausalLM",
+            "Gemma2ForCausalLM",
+            "BaichuanForCausalLM",
+        }
+
+
+def _candidate_architectures(cfg: dict) -> list[str]:
+    seen: set[str] = set()
+    candidates: list[str] = []
+
+    arch = cfg.get("architecture")
+    if isinstance(arch, str) and arch:
+        seen.add(arch)
+        candidates.append(arch)
+
+    architectures = cfg.get("architectures")
+    if isinstance(architectures, list):
+        for item in architectures:
+            if isinstance(item, str) and item and item not in seen:
+                seen.add(item)
+                candidates.append(item)
+
+    auto_map = cfg.get("auto_map")
+    if isinstance(auto_map, dict):
+        for value in auto_map.values():
+            if isinstance(value, str) and value:
+                candidate = value.split(".")[-1]
+                if candidate and candidate not in seen:
+                    seen.add(candidate)
+                    candidates.append(candidate)
+
+    return candidates
+
+
+def _guess_supported_architecture(cfg: dict, known: set[str]) -> Optional[str]:
+    def _normalize_candidate(candidate: str) -> Iterable[str]:
+        yield candidate
+        if "For" in candidate:
+            prefix, suffix = candidate.split("For", 1)
+            trimmed = prefix.rstrip("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+            if trimmed and trimmed != prefix:
+                yield trimmed + "For" + suffix
+            # Handle nemotron-h naming specifically.
+            if prefix.endswith("H"):
+                yield prefix[:-1] + "For" + suffix
+
+    for cand in _candidate_architectures(cfg):
+        for normalized in _normalize_candidate(cand):
+            if normalized in known:
+                if normalized != cand:
+                    log(
+                        "[patch-config] Mapping architecture %s -> %s for TensorRT compatibility"
+                        % (cand, normalized)
+                    )
+                return normalized
+
+    model_type = cfg.get("model_type")
+    if isinstance(model_type, str) and model_type:
+        mt = model_type.lower().rstrip("0123456789")
+        mt_base = mt.rstrip("h")
+        for candidate in known:
+            cl = candidate.lower()
+            if mt and mt in cl:
+                log(
+                    "[patch-config] Using architecture %s derived from model_type %s"
+                    % (candidate, model_type)
+                )
+                return candidate
+            if mt_base and mt_base in cl:
+                log(
+                    "[patch-config] Using architecture %s derived from model_type %s"
+                    % (candidate, model_type)
+                )
+                return candidate
+
+    return None
+
+
+def _maybe_patch_config_for_tensorrt(checkpoint_dir: Path) -> None:
+    """Patch configs that TensorRT-LLM 1.2.0rc1 cannot parse."""
+
+    config_path = checkpoint_dir / "config.json"
+    if not config_path.is_file():
+        return
+
+    try:
+        raw = config_path.read_text()
+        cfg = json.loads(raw)
+    except Exception as exc:
+        log(f"[patch-config] Skipping config patch (failed to read {config_path}: {exc})")
+        return
+
+    known_arches = _known_trt_architectures()
+    chosen = _guess_supported_architecture(cfg, known_arches)
+    if not chosen:
+        return
+
+    changed = False
+    if cfg.get("architecture") != chosen:
+        cfg["architecture"] = chosen
+        changed = True
+
+    architectures = cfg.get("architectures")
+    if isinstance(architectures, list):
+        if chosen not in architectures:
+            architectures.insert(0, chosen)
+            changed = True
+    else:
+        cfg["architectures"] = [chosen]
+        changed = True
+
+    model_type = cfg.get("model_type")
+    if isinstance(model_type, str):
+        normalized_model_type = model_type.lower().rstrip("0123456789")
+        if normalized_model_type.endswith("h"):
+            normalized_model_type = normalized_model_type[:-1]
+        normalized_model_type = normalized_model_type or model_type
+        if normalized_model_type != model_type:
+            cfg["model_type"] = normalized_model_type
+            changed = True
+
+    if not changed:
+        return
+
+    try:
+        config_path.write_text(json.dumps(cfg, indent=2, sort_keys=True) + "\n")
+        log(f"[patch-config] Wrote TensorRT-compatible config: {config_path}")
+    except Exception as exc:
+        log(f"[patch-config] Failed to write patched config {config_path}: {exc}")
+
+# ==============================================================================
 # Main build
 # ==============================================================================
 
@@ -352,6 +512,8 @@ def main() -> None:
         log(f"[{idx}/{len(models_to_build)}] Resolving checkpoint for {name} ({hf_id})…")
         checkpoint_dir = resolve_checkpoint(hf_id, name)
         log(f"[{idx}/{len(models_to_build)}] Checkpoint directory: {checkpoint_dir}")
+
+        _maybe_patch_config_for_tensorrt(Path(checkpoint_dir))
 
         # Disk space before
         try:
