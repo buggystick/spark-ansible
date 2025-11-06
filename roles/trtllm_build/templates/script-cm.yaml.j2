@@ -4,7 +4,5 @@ metadata:
   name: trtllm-build-script
   namespace: default
 data:
-  build.sh: |
-{{ lookup('file', role_path + '/files/build.sh') | indent(4, true) }}
   build.py: |
 {{ lookup('file', role_path + '/files/build.py') | indent(4, true) }}

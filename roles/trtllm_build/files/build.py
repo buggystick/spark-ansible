@@ -7,6 +7,8 @@ import json
 import os
 import subprocess
 import sys
+import logging
+import shutil
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
@@ -22,16 +24,64 @@ CHECKPOINT_SUBDIR = "checkpoint"
 ENGINE_SUBDIR = "trtllm"
 
 
+logger = logging.getLogger("trtllm_build")
+
+
+def _setup_logging() -> None:
+    level_name = os.environ.get("LOG_LEVEL", "INFO").upper()
+    level = getattr(logging, level_name, logging.INFO)
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
+    )
+    logger.debug("Logging initialised with level %s", logging.getLevelName(level))
+
+
+def _log_gpu_sanity() -> None:
+    cuda_devices = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if cuda_devices:
+        logger.info("CUDA_VISIBLE_DEVICES=%s", cuda_devices)
+    else:
+        logger.info("CUDA_VISIBLE_DEVICES is not set")
+
+    nvidia_smi = shutil.which("nvidia-smi")
+    if not nvidia_smi:
+        logger.warning("nvidia-smi binary not found in PATH; skipping GPU probe")
+        return
+
+    commands = ((nvidia_smi, "-L"), (nvidia_smi,))
+    for cmd in commands:
+        logger.info("Probing GPU visibility with: %s", " ".join(cmd))
+        proc = subprocess.run(cmd, capture_output=True, text=True)
+        if proc.returncode == 0:
+            stdout = proc.stdout.strip() or "<no output>"
+            logger.info("%s output:\n%s", os.path.basename(cmd[0]), stdout)
+            if proc.stderr:
+                logger.debug("%s stderr:\n%s", os.path.basename(cmd[0]), proc.stderr.strip())
+        else:
+            stdout = proc.stdout.strip()
+            stderr = proc.stderr.strip()
+            details = stdout or "<no stdout>"
+            if stderr:
+                details = f"{details}\n[stderr]\n{stderr}"
+            logger.warning(
+                "%s exited with code %s:\n%s",
+                os.path.basename(cmd[0]),
+                proc.returncode,
+                details,
+            )
+
+
 def _load_models() -> List[Dict[str, Any]]:
     raw = os.environ.get("MODELS_JSON", "[]")
     try:
         models = json.loads(raw)
     except json.JSONDecodeError as exc:
-        print(f"MODELS_JSON is not valid JSON: {exc}: {raw[:200]}", file=sys.stderr)
+        logger.error("MODELS_JSON is not valid JSON: %s: %s", exc, raw[:200])
         sys.exit(2)
 
     if not isinstance(models, list):
-        print("MODELS_JSON must be a JSON array", file=sys.stderr)
+        logger.error("MODELS_JSON must be a JSON array")
         sys.exit(2)
 
     completion_idx = os.environ.get("JOB_COMPLETION_INDEX")
@@ -39,13 +89,17 @@ def _load_models() -> List[Dict[str, Any]]:
         try:
             idx = int(completion_idx)
         except ValueError:
-            print(f"Ignoring invalid JOB_COMPLETION_INDEX={completion_idx!r}")
+            logger.warning("Ignoring invalid JOB_COMPLETION_INDEX=%r", completion_idx)
         else:
             if 0 <= idx < len(models):
                 models = [models[idx]]
-                print(f"Selected model index {idx} from JOB_COMPLETION_INDEX")
+                logger.info("Selected model index %s from JOB_COMPLETION_INDEX", idx)
             else:
-                print(f"JOB_COMPLETION_INDEX {idx} out of range for {len(models)} model(s)")
+                logger.warning(
+                    "JOB_COMPLETION_INDEX %s out of range for %s model(s)",
+                    idx,
+                    len(models),
+                )
 
     return models
 
@@ -68,7 +122,7 @@ def _download_checkpoint(model: Dict[str, Any], token: str | None) -> Path:
     if token:
         download_args["token"] = token
 
-    print(f"Downloading {repo_id} -> {local_dir}")
+    logger.info("Downloading %s to %s", repo_id, local_dir)
     snapshot_download(**download_args)
     return local_dir
 
@@ -98,7 +152,7 @@ def _build_engine(checkpoint_dir: Path, model: Dict[str, Any], tp: str | None, p
     extra_args: Iterable[str] = model.get("extra_args", [])
     cmd.extend(str(arg) for arg in extra_args)
 
-    print("Running:", " ".join(cmd))
+    logger.info("Starting TensorRT-LLM build: %s", " ".join(cmd))
     subprocess.check_call(cmd)
     return output_dir
 
@@ -122,28 +176,39 @@ def _write_triton_config(model: Dict[str, Any], tp: str | None, pp: str | None) 
         ]
     )
     config.write_text(contents + "\n")
+    logger.info("Wrote Triton config for %s to %s", name, config)
 
 
 
 def main() -> None:
+    _setup_logging()
+    logger.info("Starting TRT-LLM build helper")
+    _log_gpu_sanity()
+
     models = _load_models()
     if not models:
-        print("No models to build; exiting.")
+        logger.info("No models to build; exiting")
         return
+
+    logger.info("Planning to build %s model(s)", len(models))
 
     token = os.environ.get("HF_TOKEN")
     tp = os.environ.get("TP")
     pp = os.environ.get("PP")
+    logger.info("Tensor parallel size: %s | Pipeline parallel size: %s", tp or "1", pp or "1")
 
     for model in models:
         if not isinstance(model, dict) or "hf_id" not in model:
-            print(f"Skipping invalid model entry: {model}", file=sys.stderr)
+            logger.error("Skipping invalid model entry: %s", model)
             continue
+
+        model_name = model.get("name") or model["hf_id"]
+        logger.info("Processing model %s", model_name)
 
         checkpoint_dir = _download_checkpoint(model, token)
         engine_dir = _build_engine(checkpoint_dir, model, tp, pp)
         _write_triton_config(model, tp, pp)
-        print(f"Completed build for {model.get('name') or model['hf_id']} -> {engine_dir}")
+        logger.info("Completed build for %s -> %s", model_name, engine_dir)
 
 
 if __name__ == "__main__":
