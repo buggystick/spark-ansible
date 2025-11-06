@@ -344,6 +344,22 @@ def _candidate_architectures(cfg: dict) -> list[str]:
 
 
 def _guess_supported_architecture(cfg: dict, known: set[str]) -> Optional[str]:
+    known_by_lower = {item.lower(): item for item in known}
+
+    def _canonical(candidate: str) -> Optional[str]:
+        if candidate in known:
+            return candidate
+        lowered = candidate.lower()
+        if lowered in known_by_lower:
+            canonical = known_by_lower[lowered]
+            if canonical != candidate:
+                log(
+                    "[patch-config] Normalizing architecture case %s -> %s for TensorRT"
+                    % (candidate, canonical)
+                )
+            return canonical
+        return None
+
     def _normalize_candidate(candidate: str) -> Iterable[str]:
         yield candidate
         if "For" in candidate:
@@ -357,13 +373,14 @@ def _guess_supported_architecture(cfg: dict, known: set[str]) -> Optional[str]:
 
     for cand in _candidate_architectures(cfg):
         for normalized in _normalize_candidate(cand):
-            if normalized in known:
-                if normalized != cand:
+            canonical = _canonical(normalized)
+            if canonical:
+                if canonical != cand:
                     log(
                         "[patch-config] Mapping architecture %s -> %s for TensorRT compatibility"
-                        % (cand, normalized)
+                        % (cand, canonical)
                     )
-                return normalized
+                return canonical
 
     model_type = cfg.get("model_type")
     if isinstance(model_type, str) and model_type:
