@@ -10,6 +10,7 @@ import subprocess
 import sys
 import logging
 import shutil
+from importlib import import_module
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Set
@@ -72,6 +73,44 @@ def _log_gpu_sanity() -> None:
                 proc.returncode,
                 details,
             )
+
+
+def _check_trtllm_runtime() -> None:
+    """Ensure ``trtllm-build`` dependencies are ready before doing heavy work."""
+
+    binary = shutil.which("trtllm-build")
+    if not binary:
+        logger.error(
+            "trtllm-build binary not found in PATH=%s; verify the container image",
+            os.environ.get("PATH", "<unset>"),
+        )
+        sys.exit(2)
+
+    logger.debug("Found trtllm-build at %s", binary)
+
+    try:
+        trt = import_module("tensorrt")
+    except ModuleNotFoundError as exc:
+        logger.error("TensorRT Python module is unavailable: %s", exc)
+        _log_missing_tensorrt_hint()
+        sys.exit(1)
+    except OSError as exc:
+        logger.error("TensorRT runtime failed to load: %s", exc)
+        _log_missing_tensorrt_hint()
+        sys.exit(1)
+
+    version = getattr(trt, "__version__", "<unknown>")
+    logger.info("TensorRT Python runtime loaded (version %s)", version)
+
+
+def _log_missing_tensorrt_hint() -> None:
+    ld_path = os.environ.get("LD_LIBRARY_PATH", "<unset>")
+    logger.error(
+        "libnvinfer and related TensorRT shared libraries must be available."
+        " Ensure the container image exposes them and LD_LIBRARY_PATH includes"
+        " their directory. Current LD_LIBRARY_PATH=%s",
+        ld_path,
+    )
 
 
 def _load_models() -> List[Dict[str, Any]]:
@@ -225,6 +264,7 @@ def main() -> None:
     _setup_logging()
     logger.info("Starting TRT-LLM build helper")
     _log_gpu_sanity()
+    _check_trtllm_runtime()
 
     models = _load_models()
     if not models:
