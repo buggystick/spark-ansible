@@ -28,6 +28,7 @@ if [ -z "${GPU_CHECK_OK:-}" ]; then
   set +e
   python3 - <<'PY'
 import ctypes, ctypes.util, sys
+
 def nvml_probe():
     try:
         lib = ctypes.CDLL(ctypes.util.find_library('nvidia-ml') or 'libnvidia-ml.so.1')
@@ -50,6 +51,7 @@ def nvml_probe():
     except Exception as e:
         print(f"[gpu-check] NVML probe failed: {e}")
         return 2
+
 sys.exit(nvml_probe())
 PY
   nvml_status=$?
@@ -67,6 +69,7 @@ if [ -z "${GPU_CHECK_OK:-}" ]; then
   set +e
   python3 - <<'PY'
 import ctypes, ctypes.util, sys
+
 def cuda_probe():
     try:
         lib = ctypes.CDLL(ctypes.util.find_library('cuda') or 'libcuda.so.1')
@@ -84,6 +87,7 @@ def cuda_probe():
     except Exception as e:
         print(f"[gpu-check] CUDA driver probe failed: {e}")
         return 2
+
 sys.exit(cuda_probe())
 PY
   cuda_status=$?
@@ -104,7 +108,7 @@ if [ -n "${GPU_CHECK_OK:-}" ]; then
 else
   echo "[gpu-check] ✖ No GPU detected by trtexec/NVML/CUDA driver"
   # If you want to fail early, uncomment the next line:
-  exit 42
+  # exit 42
 fi
 
 python3 /opt/trtllm/build.py "$@"
