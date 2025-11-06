@@ -280,6 +280,226 @@ def resolve_checkpoint(hf_id: str, model_name: str) -> str:
 
 
 # ==============================================================================
+# TRT-LLM compatibility helpers
+# ==============================================================================
+
+def _known_trt_architectures() -> set[str]:
+    """Best-effort set of TensorRT-LLM architecture names."""
+
+    try:
+        from tensorrt_llm.models.modeling_utils import MODEL_MAP  # type: ignore
+
+        return set(MODEL_MAP.keys())
+    except Exception:
+        # Fallback for environments where tensorrt_llm is unavailable (e.g., CI lint).
+        return {
+            "GPTForCausalLM",
+            "GPTJForCausalLM",
+            "GPTNeoXForCausalLM",
+            "LLaMAForCausalLM",
+            "LLaMAForConditionalGeneration",
+            "MPTForCausalLM",
+            "MPTForConditionalGeneration",
+            "MistralForCausalLM",
+            "MixtralForCausalLM",
+            "NemotronForCausalLM",
+            "NemotronForConditionalGeneration",
+            "PhiForCausalLM",
+            "Phi3ForCausalLM",
+            "FalconForCausalLM",
+            "QWenForCausalLM",
+            "QWen2ForCausalLM",
+            "GemmaForCausalLM",
+            "Gemma2ForCausalLM",
+            "BaichuanForCausalLM",
+        }
+
+
+def _candidate_architectures(cfg: dict) -> list[str]:
+    seen: set[str] = set()
+    candidates: list[str] = []
+
+    def _push(item: Optional[str]) -> None:
+        if isinstance(item, str) and item and item not in seen:
+            seen.add(item)
+            candidates.append(item)
+
+    _push(cfg.get("architecture"))
+
+    architectures = cfg.get("architectures")
+    if isinstance(architectures, list):
+        for item in architectures:
+            _push(item if isinstance(item, str) else None)
+
+    auto_map = cfg.get("auto_map")
+    if isinstance(auto_map, dict):
+        for value in auto_map.values():
+            if isinstance(value, str):
+                _push(value.split(".")[-1])
+            elif isinstance(value, (list, tuple)):
+                for entry in value:
+                    if isinstance(entry, str):
+                        _push(entry.split(".")[-1])
+
+    return candidates
+
+
+def _guess_supported_architecture(cfg: dict, known: set[str]) -> Optional[str]:
+    known_by_lower = {item.lower(): item for item in known}
+
+    def _prefix_variants(prefix: str) -> set[str]:
+        variants: set[str] = set()
+        stack = [prefix]
+        while stack:
+            current = stack.pop()
+            if not current or current in variants:
+                continue
+            variants.add(current)
+
+            trimmed = current.rstrip("-_ ")
+            if trimmed != current:
+                stack.append(trimmed)
+
+            without_digits = current.rstrip("0123456789")
+            if without_digits != current:
+                stack.append(without_digits)
+
+            without_upper = current.rstrip("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+            if without_upper != current:
+                stack.append(without_upper)
+
+            without_h = current.rstrip("Hh")
+            if without_h != current:
+                stack.append(without_h)
+
+            if "-" in current:
+                stack.append(current.rsplit("-", 1)[0])
+            if "_" in current:
+                stack.append(current.rsplit("_", 1)[0])
+        return variants
+
+    def _candidate_variants(candidate: str) -> Iterable[str]:
+        yielded: set[str] = set()
+
+        def _emit(value: str) -> None:
+            if value and value not in yielded:
+                yielded.add(value)
+                yield_queue.append(value)
+
+        yield_queue: list[str] = []
+        _emit(candidate)
+
+        while yield_queue:
+            current = yield_queue.pop(0)
+            yield current
+
+            collapsed = current.replace("-", "").replace("_", "")
+            if collapsed != current:
+                _emit(collapsed)
+
+            if "For" in current:
+                prefix, suffix = current.split("For", 1)
+                suffix = "For" + suffix
+                for pref_variant in _prefix_variants(prefix):
+                    _emit(pref_variant + suffix)
+
+    def _canonical(candidate: str) -> Optional[str]:
+        for variant in _candidate_variants(candidate):
+            lowered = variant.lower()
+            if lowered in known_by_lower:
+                canonical = known_by_lower[lowered]
+                if canonical != candidate:
+                    log(
+                        "[patch-config] Mapping architecture %s -> %s for TensorRT compatibility"
+                        % (candidate, canonical)
+                    )
+                return canonical
+        return None
+
+    for cand in _candidate_architectures(cfg):
+        canonical = _canonical(cand)
+        if canonical:
+            return canonical
+
+    model_type = cfg.get("model_type")
+    if isinstance(model_type, str) and model_type:
+        mt_lower = model_type.lower()
+        mt_simple = "".join(ch for ch in mt_lower if ch.isalnum())
+        mt_trimmed = mt_simple.rstrip("0123456789h")
+        for candidate in known:
+            cl = candidate.lower()
+            cl_simple = "".join(ch for ch in cl if ch.isalnum())
+            if mt_simple and mt_simple in cl_simple:
+                log(
+                    "[patch-config] Using architecture %s derived from model_type %s"
+                    % (candidate, model_type)
+                )
+                return candidate
+            if mt_trimmed and mt_trimmed in cl_simple:
+                log(
+                    "[patch-config] Using architecture %s derived from model_type %s"
+                    % (candidate, model_type)
+                )
+                return candidate
+
+    log("[patch-config] Unable to infer TensorRT architecture from config fields")
+    return None
+
+
+def _maybe_patch_config_for_tensorrt(checkpoint_dir: Path) -> None:
+    """Patch configs that TensorRT-LLM 1.2.0rc1 cannot parse."""
+
+    config_path = checkpoint_dir / "config.json"
+    if not config_path.is_file():
+        return
+
+    try:
+        raw = config_path.read_text()
+        cfg = json.loads(raw)
+    except Exception as exc:
+        log(f"[patch-config] Skipping config patch (failed to read {config_path}: {exc})")
+        return
+
+    known_arches = _known_trt_architectures()
+    chosen = _guess_supported_architecture(cfg, known_arches)
+    if not chosen:
+        return
+
+    changed = False
+    if cfg.get("architecture") != chosen:
+        cfg["architecture"] = chosen
+        changed = True
+
+    architectures = cfg.get("architectures")
+    if isinstance(architectures, list):
+        if chosen not in architectures:
+            architectures.insert(0, chosen)
+            changed = True
+    else:
+        cfg["architectures"] = [chosen]
+        changed = True
+
+    model_type = cfg.get("model_type")
+    if isinstance(model_type, str):
+        normalized_model_type = model_type.strip().lower()
+        if normalized_model_type.endswith("-h"):
+            normalized_model_type = normalized_model_type[:-2]
+        elif normalized_model_type.endswith("h") and normalized_model_type[-2:-1].isdigit():
+            normalized_model_type = normalized_model_type[:-1]
+        if normalized_model_type and normalized_model_type != model_type:
+            cfg["model_type"] = normalized_model_type
+            changed = True
+
+    if not changed:
+        return
+
+    try:
+        config_path.write_text(json.dumps(cfg, indent=2, sort_keys=True) + "\n")
+        log(f"[patch-config] Wrote TensorRT-compatible config: {config_path}")
+    except Exception as exc:
+        log(f"[patch-config] Failed to write patched config {config_path}: {exc}")
+
+# ==============================================================================
 # Main build
 # ==============================================================================
 
@@ -352,6 +572,8 @@ def main() -> None:
         log(f"[{idx}/{len(models_to_build)}] Resolving checkpoint for {name} ({hf_id})…")
         checkpoint_dir = resolve_checkpoint(hf_id, name)
         log(f"[{idx}/{len(models_to_build)}] Checkpoint directory: {checkpoint_dir}")
+
+        _maybe_patch_config_for_tensorrt(Path(checkpoint_dir))
 
         # Disk space before
         try:
