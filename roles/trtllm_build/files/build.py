@@ -5,12 +5,14 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import logging
 import shutil
+from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, Iterable, List, Set
 
 try:
     from huggingface_hub import snapshot_download  # type: ignore
@@ -127,6 +129,31 @@ def _download_checkpoint(model: Dict[str, Any], token: str | None) -> Path:
     return local_dir
 
 
+@lru_cache(maxsize=1)
+def _supported_trtllm_flags() -> Set[str]:
+    """Return the CLI flags exposed by ``trtllm-build``.
+
+    We shell out to ``trtllm-build --help`` once so we can avoid passing
+    parameters that are unsupported in the currently bundled version.
+    """
+
+    help_cmd = ["trtllm-build", "--help"]
+    logger.debug("Inspecting trtllm-build flags via: %s", " ".join(help_cmd))
+    proc = subprocess.run(help_cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        logger.warning(
+            "Unable to inspect trtllm-build flags (exit code %s); assuming none",
+            proc.returncode,
+        )
+        if proc.stderr:
+            logger.debug("trtllm-build --help stderr:\n%s", proc.stderr.strip())
+        return set()
+
+    flags = set(re.findall(r"--([\w-]+)", proc.stdout))
+    logger.debug("trtllm-build supports flags: %s", ", ".join(sorted(flags)) or "<none>")
+    return flags
+
+
 def _build_engine(checkpoint_dir: Path, model: Dict[str, Any], tp: str | None, pp: str | None) -> Path:
     name = model.get("name") or checkpoint_dir.parent.name
     output_dir = MODELS_ROOT / name / ENGINE_SUBDIR
@@ -144,16 +171,30 @@ def _build_engine(checkpoint_dir: Path, model: Dict[str, Any], tp: str | None, p
     max_seq = str(model.get("max_seq_len", 9216))
     cmd += ["--max_input_len", max_input, "--max_seq_len", max_seq]
 
+    supported_flags = _supported_trtllm_flags()
+
     if tp:
-        cmd += ["--tensor_parallel_size", tp]
+        flag = "tensor_parallel_size"
+        if flag in supported_flags:
+            cmd += [f"--{flag}", tp]
+        else:
+            logger.info("Skipping unsupported trtllm-build flag --%s", flag)
     if pp:
-        cmd += ["--pipeline_parallel_size", pp]
+        flag = "pipeline_parallel_size"
+        if flag in supported_flags:
+            cmd += [f"--{flag}", pp]
+        else:
+            logger.info("Skipping unsupported trtllm-build flag --%s", flag)
 
     extra_args: Iterable[str] = model.get("extra_args", [])
     cmd.extend(str(arg) for arg in extra_args)
 
     logger.info("Starting TensorRT-LLM build: %s", " ".join(cmd))
-    subprocess.check_call(cmd)
+    try:
+        subprocess.check_call(cmd)
+    except subprocess.CalledProcessError as exc:
+        logger.error("trtllm-build failed with exit code %s", exc.returncode)
+        raise
     return output_dir
 
 
