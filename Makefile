@@ -26,7 +26,7 @@
     	molecule destroy
 
     check:
-    	@if [ -z "$(PLAY)" ]; then echo "Usage: make check PLAY=site.yml" && exit 2; fi
-    	ansible-playbook -i inventory/hosts $(PLAY) --check --diff -vv
+	@if [ -z "$(PLAY)" ]; then echo "Usage: make check PLAY=site.yml" && exit 2; fi
+	ansible-playbook -i inventory/hosts.ini $(PLAY) --check --diff -vv
 
 all: lint test

@@ -57,9 +57,9 @@
     src: /tmp/trtllm-build-script-cm.yaml
     apply: yes
 
-- name: Copy build Job manifest
-  ansible.builtin.copy:
-    src: trtllm-build-job.yaml
+- name: Render build Job manifest
+  ansible.builtin.template:
+    src: trtllm-build-job.yaml.j2
     dest: /tmp/trtllm-build-job.yaml
     mode: '0644'
 

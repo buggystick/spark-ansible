@@ -28,6 +28,7 @@ ENGINE_SUBDIR = "trtllm"
 
 
 logger = logging.getLogger("trtllm_build")
+logger.setLevel(logging.DEBUG)
 
 
 def _setup_logging() -> None:

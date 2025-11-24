@@ -33,11 +33,17 @@
     src: "{{ role_path }}/files/triton-svc.yaml"
     apply: yes
 
+- name: Apply Triton StatefulSet template
+  ansible.builtin.template:
+    src: triton-ss.yaml.j2
+    dest: /tmp/triton-ss.yaml
+    mode: '0644'
+
 - name: Apply Triton StatefulSet manifest
   kubernetes.core.k8s:
     kubeconfig: /etc/kubernetes/admin.conf
     state: present
-    src: "{{ role_path }}/files/triton-ss.yaml"
+    src: /tmp/triton-ss.yaml
     apply: yes
 
 - name: Wait for Triton pods to be Ready
