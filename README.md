@@ -85,11 +85,45 @@ kubectl -n longhorn-system get ingress -o wide
 
 ## Quickstart (dev / Codex-friendly)
 ```bash
-make setup
-make lint
-make test
+just setup                     # install/upgrade Python deps
+just lint                      # yamllint + ansible-lint
+just test                      # full Molecule test matrix
 # dry-run
-make check PLAY=site.yml
+just check play=site.yml       # ansible-playbook --check
+```
+
+### Command reference
+
+| Command | Purpose |
+| --- | --- |
+| `just setup` | Upgrade pip and install `requirements.txt` into the active venv. |
+| `just galaxy` | Install Ansible Galaxy collections from `requirements.yml`. |
+| `just lint` | Run yamllint and ansible-lint across the repo. |
+| `just test` | Execute the entire Molecule test matrix (create → verify → destroy). |
+| `just converge` | Run `molecule converge` only for quick iterations. |
+| `just idempotence` | Check that the converge play is idempotent. |
+| `just destroy` | Tear down Molecule-created resources without re-running tests. |
+| `just check play=site.yml` | Dry-run `ansible-playbook` against `inventory/hosts.ini`. |
+| `just converge-play play=site.yml` | Run `ansible-playbook` for real. |
+| `just k -- …` | Raw kubectl passthrough (uses `KUBECONFIG` or the default path). |
+| `just kgp namespace=foo` | `kubectl get pods` within a namespace. |
+| `just kgpa` | `kubectl get pods -A`. |
+| `just klogs pod=my-pod [container=ctr]` | Tail pod logs, optionally scoping to a container. |
+| `just kdesc resource=deploy name=foo namespace=bar` | Describe a Kubernetes object. |
+| `just knodes` | `kubectl get nodes -o wide`. |
+| `just kctx` | Show kubeconfig contexts (helpful when toggling clusters). |
+
+### Handy kubectl helpers
+
+Export `KUBECONFIG` if you need something other than `/etc/kubernetes/admin.conf`, then run:
+
+```bash
+just k -- get pods -A            # passthrough wrapper
+just kgp namespace=openwebui     # kubectl get pods -n openwebui
+just kgpa                        # kubectl get pods -A
+just klogs pod=my-pod namespace=default [container=my-container]
+just kdesc resource=deploy name=triton-llm namespace=default
+just knodes                      # kubectl get nodes -o wide
 ```
 
 See `AGENTS.md` for agent “house rules”. CI will run Codex review on PRs if you set `OPENAI_API_KEY` as a repo secret.
