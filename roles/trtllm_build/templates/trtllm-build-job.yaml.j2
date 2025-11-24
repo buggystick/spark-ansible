@@ -1,0 +1,67 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: trtllm-build
+  namespace: default
+spec:
+  backoffLimit: 0
+  completionMode: Indexed
+  completions: {{ [ (models | default([])) | length, 1 ] | max }}
+  parallelism: {{ [ (models | default([])) | length, 1 ] | max }}
+  template:
+    metadata:
+      labels:
+        app: trtllm-build
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        nvidia.com/gpu.present: "true"
+      containers:
+        - name: builder
+          image: nvcr.io/nvidia/tensorrt-llm/release:1.2.0rc1
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hf-token
+                  key: token
+                  optional: true
+            - name: HF_HUB_DISABLE_HF_TRANSFER
+              value: "1"
+            - name: HF_HOME
+              value: /models/huggingface
+            - name: HUGGINGFACE_HUB_CACHE
+              value: /models/huggingface/hub
+            - name: TRANSFORMERS_CACHE
+              value: /models/huggingface/hub
+            - name: NVIDIA_DRIVER_CAPABILITIES
+              value: compute,utility
+            - name: NVIDIA_VISIBLE_DEVICES
+              value: "all"
+            - name: TP
+              value: "{{ tp | default(1) }}"
+            - name: PP
+              value: "{{ pp | default(1) }}"
+            - name: WORLD
+              value: "{{ ((tp | default(1)) | int) * ((pp | default(1)) | int) }}"
+            - name: MODELS_JSON
+              value: '{{ (models | default([])) | to_json }}'
+          resources:
+            limits:
+              nvidia.com/gpu: 1
+          volumeMounts:
+            - name: models
+              mountPath: /models
+            - name: script
+              mountPath: /opt/trtllm
+              readOnly: true
+          command: ["python3", "/opt/trtllm/build.py"]
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: triton-models
+        - name: script
+          configMap:
+            name: trtllm-build-script
+            defaultMode: 0755
