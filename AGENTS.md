@@ -28,7 +28,7 @@ Automate provisioning of two NVIDIA DGX Spark nodes (`spark-6b57`, `spark-7659`)
 - `just idempotence` # Molecule idempotence check
 - `just destroy`     # tear down Molecule resources
 - `just check play=site.yml`  # ansible-playbook --check --diff
-- `just converge-play play=site.yml`  # ansible-playbook real run
+- `just converge-play site.yml "-e foo=bar"`  # ansible-playbook real run (quote extra args)
 - `just k -- get pods -A`     # kubectl passthrough using the repo default kubeconfig
 - `just klogs pod=my-pod namespace=foo`  # tail pod logs via kubectl
 - `just knodes`               # kubectl get nodes -o wide

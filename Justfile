@@ -46,8 +46,9 @@ check play="site.yml":
 	ansible-playbook -i {{inventory}} {{play}} --check --diff -vv
 
 # Run ansible-playbook for real against the inventory
-converge-play play="site.yml":
-	ansible-playbook -i {{inventory}} {{play}}
+# Run ansible-playbook for real against the inventory
+converge-play play="site.yml" extra="":
+	ansible-playbook -i {{inventory}} {{play}} {{extra}}
 
 # --- Kubernetes helpers ---
 

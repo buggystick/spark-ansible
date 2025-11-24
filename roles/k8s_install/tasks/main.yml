@@ -349,6 +349,35 @@
   changed_when: false
   when: "'primary' in group_names"
 
+- name: Ensure control-plane taint blocks workloads on primary
+  kubernetes.core.k8s_taint:
+    kubeconfig: /etc/kubernetes/admin.conf
+    kind: Node
+    name: "{{ k8s_primary_node_name | default(inventory_hostname) }}"
+    taints:
+      - key: node-role.kubernetes.io/control-plane
+        value: ""
+        effect: NoSchedule
+    state: present
+  when:
+    - "'primary' in group_names"
+    - k8s_primary_enforce_control_plane_taint | bool
+
+- name: Ensure control-plane label is present on primary
+  kubernetes.core.k8s:
+    kubeconfig: /etc/kubernetes/admin.conf
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Node
+      metadata:
+        name: "{{ k8s_primary_node_name | default(inventory_hostname) }}"
+        labels:
+          node-role.kubernetes.io/control-plane: control-plane
+  when:
+    - "'primary' in group_names"
+    - k8s_primary_enforce_control_plane_taint | bool
+
 # ------- Generate join command on primary & share to workers -------
 - name: Obtain join command (primary only)
   command: kubeadm token create --print-join-command --ttl 30m

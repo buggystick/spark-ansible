@@ -104,7 +104,7 @@ just check play=site.yml       # ansible-playbook --check
 | `just idempotence` | Check that the converge play is idempotent. |
 | `just destroy` | Tear down Molecule-created resources without re-running tests. |
 | `just check play=site.yml` | Dry-run `ansible-playbook` against `inventory/hosts.ini`. |
-| `just converge-play play=site.yml` | Run `ansible-playbook` for real. |
+| `just converge-play site.yml "-e foo=bar"` | Run `ansible-playbook`; optional quoted args are appended to the command. |
 | `just k -- …` | Raw kubectl passthrough (uses `KUBECONFIG` or the default path). |
 | `just kgp namespace=foo` | `kubectl get pods` within a namespace. |
 | `just kgpa` | `kubectl get pods -A`. |
