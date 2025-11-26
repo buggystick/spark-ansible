@@ -1,0 +1,5 @@
+# Complete uninstall / teardown of the cluster.
+- hosts: all
+  become: yes
+  roles:
+    - k8s_uninstall

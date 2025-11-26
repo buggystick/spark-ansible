@@ -56,7 +56,13 @@ This produces, e.g.:
 ansible-playbook -i inventory/hosts.ini site.yml --tags triton_trtllm,openai_proxy,openwebui
 ```
 
-6) **Point Open WebUI to the single endpoint**
+6) **Tear everything down (optional reset)**
+```bash
+ansible-playbook -i inventory/hosts.ini uninstall.yml
+# or use: just uninstall
+```
+
+7) **Point Open WebUI to the single endpoint**
 - Base URL: `http://openai-proxy.default.svc.cluster.local:8000/v1`
 - Choose the active model via the proxy’s **Model Manager**:
   ```bash
@@ -105,6 +111,7 @@ just check play=site.yml       # ansible-playbook --check
 | `just destroy` | Tear down Molecule-created resources without re-running tests. |
 | `just check play=site.yml` | Dry-run `ansible-playbook` against `inventory/hosts.ini`. |
 | `just converge-play site.yml "-e foo=bar"` | Run `ansible-playbook`; optional quoted args are appended to the command. |
+| `just uninstall` | Run the dedicated uninstall playbook (`uninstall.yml`). |
 | `just k -- …` | Raw kubectl passthrough (uses `KUBECONFIG` or the default path). |
 | `just kgp namespace=foo` | `kubectl get pods` within a namespace. |
 | `just kgpa` | `kubectl get pods -A`. |

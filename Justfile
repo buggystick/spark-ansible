@@ -50,6 +50,10 @@ check play="site.yml":
 converge-play play="site.yml" extra="":
 	ansible-playbook -i {{inventory}} {{play}} {{extra}}
 
+# Tear down Kubernetes + add-ons using the dedicated uninstall playbook
+uninstall:
+	ansible-playbook -i {{inventory}} uninstall.yml
+
 # --- Kubernetes helpers ---
 
 # Generic pass-through to kubectl (usage: just k -- get pods -A)

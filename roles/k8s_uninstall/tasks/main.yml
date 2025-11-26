@@ -1,15 +1,7 @@
 ---
 # roles/k8s_uninstall/tasks/main.yml
 # Complete uninstall/purge of Kubernetes and related components (Cilium, Traefik, Longhorn,
-# NVIDIA GPU/Network Operators, etc.). When k8s_uninstall=true, performs cleanup and exits host.
-
-- name: Check if uninstall requested
-  set_fact:
-    _do_uninstall: "{{ k8s_uninstall | default(false) | bool }}"
-
-- name: Exit role early if uninstall not requested
-  meta: end_host
-  when: not _do_uninstall
+# NVIDIA GPU/Network Operators, etc.).
 
 # Stop services early
 - name: Stop kubelet service (best effort)

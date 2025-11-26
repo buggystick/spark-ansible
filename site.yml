@@ -1,38 +1,31 @@
-# Uninstall pass: if k8s_uninstall=true, run uninstall role first to purge and end host
-- hosts: all
-  become: yes
-  roles:
-    - { role: k8s_uninstall, when: k8s_uninstall | default(false) | bool }
-
 # Install/Configure pass
 - hosts: all
   become: yes
   roles:
-    - { role: k8s_install, when: not (k8s_uninstall | default(false) | bool), k8s_install_traefik: false }
+    - { role: k8s_install, k8s_install_traefik: false }
 
-# Post-install components (only apply if cluster exists; if uninstall ran, end_host prevents further roles)
+# Post-install components (only apply if cluster exists)
 - hosts: primary
   become: yes
   environment:
     K8S_AUTH_KUBECONFIG: /etc/kubernetes/admin.conf
   roles:
-    - { role: nvidia_gpu_operator, when: not (k8s_uninstall | default(false) | bool) }
-    - { role: nvidia_net_operator, when: not (k8s_uninstall | default(false) | bool) }
+    - { role: nvidia_gpu_operator }
+    - { role: nvidia_net_operator }
     - {
         role: traefik,
-        when: not (k8s_uninstall | default(false) | bool),
         tags: ['traefik']
       }
-    - { role: longhorn, when: not (k8s_uninstall | default(false) | bool) }
+    - { role: longhorn }
 
 - hosts: primary
   become: yes
   roles:
-    - { role: trtllm_build, tags: ['trtllm_build','build'], when: not (k8s_uninstall | default(false) | bool) }
+    - { role: trtllm_build, tags: ['trtllm_build','build'] }
 
 - hosts: primary
   become: yes
   roles:
-    - { role: triton_trtllm, when: not (k8s_uninstall | default(false) | bool) }
-    - { role: openai_proxy, when: not (k8s_uninstall | default(false) | bool) }
-    - { role: openwebui, when: not (k8s_uninstall | default(false) | bool) }
+    - { role: triton_trtllm }
+    - { role: openai_proxy }
+    - { role: openwebui }
