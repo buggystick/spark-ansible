@@ -1,2 +1,7 @@
 group_vars/secrets.yml
 .idea/
+.terraform/
+terraform.tfstate
+terraform.tfvars
+plan.tfplan
+terraform.log
