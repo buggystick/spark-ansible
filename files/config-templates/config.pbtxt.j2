@@ -1,6 +1,0 @@
-name: "{{ model_name }}"
-backend: "tensorrtllm"
-max_batch_size: 32
-parameters: { key: "tensor_parallel_size" value: { string_value: "{{ tp }}" } }
-parameters: { key: "pipeline_parallel_size" value: { string_value: "{{ pp }}" } }
-instance_group [{ kind: KIND_GPU, count: 1 }]
