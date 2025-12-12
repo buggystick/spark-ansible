@@ -1,6 +1,8 @@
 # Install/Configure pass
 - hosts: all
   become: yes
+  environment:
+    K8S_AUTH_KUBECONFIG: "{{ k8s_auth_kubeconfig | default(lookup('env', 'KUBECONFIG')) | default('/etc/kubernetes/admin.conf', true) }}"
   roles:
     - { role: k8s_install, k8s_install_traefik: false }
 
@@ -17,15 +19,15 @@
         tags: ['traefik']
       }
     - { role: longhorn }
+    - { role: kuberay, tags: ['kuberay'] }
 
 - hosts: primary
   become: yes
   roles:
-    - { role: trtllm_build, tags: ['trtllm_build','build'] }
-
-- hosts: primary
-  become: yes
-  roles:
-    - { role: triton_trtllm }
-    - { role: openai_proxy }
+    - { role: vllm_ray, tags: ['vllm'] }
     - { role: openwebui }
+
+- hosts: workers
+  become: yes
+  roles:
+    - { role: join_workers, tags: ['join'] }

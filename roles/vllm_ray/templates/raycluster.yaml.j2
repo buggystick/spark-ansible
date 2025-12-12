@@ -1,0 +1,92 @@
+apiVersion: ray.io/v1
+kind: RayCluster
+metadata:
+  name: sparks-ray
+  namespace: default
+spec:
+  headGroupSpec:
+    rayStartParams:
+      num-gpus: "{{ vllm_tensor_parallel_size | default(1) }}"
+      ray-client-server-port: "10001"
+    template:
+      metadata:
+        labels:
+          app: vllm
+      spec:
+        tolerations:
+          - key: nvidia.com/gpu
+            operator: Exists
+            effect: NoSchedule
+        volumes:
+          - name: cache
+            persistentVolumeClaim:
+              claimName: vllm-cache
+        containers:
+          - name: ray-head
+            image: "{{ vllm_image | default('vllm/vllm-openai:latest-cuda') }}"
+            imagePullPolicy: IfNotPresent
+            env:
+              - name: HF_TOKEN
+                valueFrom:
+                  secretKeyRef:
+                name: hf-token
+                key: token
+                optional: true
+            volumeMounts:
+              - name: cache
+                mountPath: /root/.cache/huggingface
+            resources:
+              limits:
+                nvidia.com/gpu: "{{ vllm_tensor_parallel_size | default(1) }}"
+            command: ["ray"]
+            args:
+              - start
+              - --head
+              - --node-ip-address=$(POD_IP)
+              - --port=6379
+              - --ray-client-server-port=10001
+            ports:
+              - containerPort: 6379
+              - containerPort: 10001
+  workerGroupSpecs:
+    - groupName: sparks-workers
+      replicas: {{ vllm_pipeline_parallel_size | default(2) | int - 1 }}
+      minReplicas: {{ vllm_pipeline_parallel_size | default(2) | int - 1 }}
+      maxReplicas: {{ vllm_pipeline_parallel_size | default(2) | int - 1 }}
+      rayStartParams:
+        num-gpus: "{{ vllm_tensor_parallel_size | default(1) }}"
+      template:
+        metadata:
+          labels:
+            app: vllm
+        spec:
+          tolerations:
+            - key: nvidia.com/gpu
+              operator: Exists
+              effect: NoSchedule
+          volumes:
+            - name: cache
+              persistentVolumeClaim:
+                claimName: vllm-cache
+          containers:
+            - name: ray-worker
+              image: "{{ vllm_image | default('vllm/vllm-openai:latest-cuda') }}"
+              imagePullPolicy: IfNotPresent
+              env:
+                - name: HF_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: hf-token
+                      key: token
+                      optional: true
+              volumeMounts:
+                - name: cache
+                  mountPath: /root/.cache/huggingface
+              resources:
+                limits:
+                  nvidia.com/gpu: "{{ vllm_tensor_parallel_size | default(1) }}"
+              command: ["ray"]
+              args:
+                - start
+                - --address=$(RAY_HEAD_SERVICE_HOST):6379
+                - --node-ip-address=$(POD_IP)

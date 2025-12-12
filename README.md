@@ -1,18 +1,18 @@
-# DGX Sparks — Triton + TensorRT-LLM (PP=2, TP=1)
+# DGX Sparks — vLLM (OpenAI API) on 2× DGX (PP=2, TP=1)
 
 This repo is tuned for **two DGX Sparks, one Blackwell-class GPU per node**.
-We run **TensorRT-LLM** via **Triton Inference Server** across the two nodes using:
+We now serve models with **vLLM** (OpenAI-compatible API) across the two nodes using Ray:
 
-- **Tensor Parallelism (TP) = 1** (no intra-layer sharding; one GPU per node)
-- **Pipeline Parallelism (PP) = 2** (layers split across the two nodes)
-- **World size = 2**
+- **Tensor Parallelism (TP) = 1** (per-GPU)
+- **Pipeline Parallelism (PP) = 2** (one stage per Spark)
+- **World size = 2** (Ray head + 1 worker)
 
 It also includes:
 - **NVIDIA GPU Operator** (drivers/toolkit/DCGM)
 - **NVIDIA Network Operator** (RDMA / UCX device plugin) to use your **ConnectX-7** link
 - **Longhorn** using a **directory** on NVMe (no reformat)
-- A small **OpenAI-compatible proxy** + **Model Manager** (load/unload Triton models)
-- **Open WebUI** preconfigured to talk to the proxy
+- **KubeRay** operator + RayCluster spanning both nodes
+- **Open WebUI** preconfigured to talk to the vLLM service
 
 Hosts (adjust in `inventory/hosts.ini`):
 - primary: `spark-6b57`
@@ -37,24 +37,24 @@ cp group_vars/secrets.yml.example group_vars/secrets.yml
 ansible-playbook -i inventory/hosts.ini site.yml --tags k8s,nvidia_gpu_operator,nvidia_net_operator,longhorn
 ```
 
-4) **Build engines (once per model, TP=1 PP=2)**
+4) **Join DGX Sparks as workers (over SSH)**
 ```bash
-ansible-playbook -i inventory/hosts.ini site.yml --tags trtllm_build
+# ensure Sparks are uncommented in inventory/hosts.ini under [workers]
+export KUBECONFIG=$PWD/kubeconfig-talos.yaml
+ansible-playbook -i inventory/hosts.ini site.yml --tags join --limit workers
 ```
 
-> **Note:** The playbook now exports `HF_HUB_DISABLE_HF_TRANSFER=1` by default to avoid DNS failures on restricted clusters. Set the variable in your job spec or shell (for example `export HF_HUB_DISABLE_HF_TRANSFER=0`) before running `ansible-playbook` if you need to re-enable Hugging Face Transfer.
-
-This produces, e.g.:
-```
-/srv/models/qwen235b_fp4/trtllm/engine_rank0.plan
-/srv/models/qwen235b_fp4/trtllm/engine_rank1.plan
-/srv/models/qwen235b_fp4/config.pbtxt
-```
-
-5) **Deploy Triton + proxy + Open WebUI**
+5) **Deploy Ray + vLLM + Open WebUI**
 ```bash
-ansible-playbook -i inventory/hosts.ini site.yml --tags triton_trtllm,openai_proxy,openwebui
+ansible-playbook -i inventory/hosts.ini site.yml --tags kuberay,vllm,openwebui
 ```
+
+> The play:
+> - Installs KubeRay operator
+> - Creates a RayCluster (head on primary, one worker)
+> - Submits a RayJob that runs `vllm serve` with `TP=1, PP=2`
+> - Exposes vLLM via `svc/vllm` on port 8000 (OpenAI API)
+> Models pull from Hugging Face into a Longhorn-backed cache (`vllm-cache` PVC). Provide gated access by setting `hf_token` in `group_vars/secrets.yml` (creates `Secret/hf-token`).
 
 6) **Tear everything down (optional reset)**
 ```bash
@@ -62,12 +62,9 @@ ansible-playbook -i inventory/hosts.ini uninstall.yml
 # or use: just uninstall
 ```
 
-7) **Point Open WebUI to the single endpoint**
-- Base URL: `http://openai-proxy.default.svc.cluster.local:8000/v1`
-- Choose the active model via the proxy’s **Model Manager**:
-  ```bash
-  curl "http://openai-proxy.default.svc.cluster.local:8000/admin/set_model?name=qwen235b_fp4"
-  ```
+7) **Point Open WebUI to the vLLM endpoint**
+- Base URL: `http://vllm.default.svc.cluster.local:8000/v1`
+- Switch models/parallelism by editing `vllm_model`, `vllm_tensor_parallel_size`, `vllm_pipeline_parallel_size` in `group_vars/all.yml` (or inventory) and rerun: `ansible-playbook -i inventory/hosts.ini site.yml --tags vllm`
 
 ## TP/PP Recap for This Hardware
 
@@ -75,7 +72,7 @@ ansible-playbook -i inventory/hosts.ini uninstall.yml
 - **PP=2**: split layers across nodes; activations flow once per token step over CX7.
 - **World size=2**: one rank per node.
 
-If you later add more nodes, increase **PP** accordingly and rebuild engines with the new `--pp-size`.
+If you later add more nodes, increase **PP** (pipeline parallel size) accordingly by setting `vllm_pipeline_parallel_size` and rerunning the vLLM role.
 
 ## Common Commands
 
@@ -129,7 +126,7 @@ just k -- get pods -A            # passthrough wrapper
 just kgp namespace=openwebui     # kubectl get pods -n openwebui
 just kgpa                        # kubectl get pods -A
 just klogs pod=my-pod namespace=default [container=my-container]
-just kdesc resource=deploy name=triton-llm namespace=default
+just kdesc resource=sts name=vllm namespace=default
 just knodes                      # kubectl get nodes -o wide
 ```
 

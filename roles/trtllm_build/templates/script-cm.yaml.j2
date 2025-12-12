@@ -1,8 +1,0 @@
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: trtllm-build-script
-  namespace: default
-data:
-  build.py: |
-{{ lookup('file', role_path + '/files/build.py') | indent(4, true) }}

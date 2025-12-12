@@ -1,0 +1,94 @@
+---
+- name: Ensure default namespace exists (usually present)
+  kubernetes.core.k8s:
+    kubeconfig: "{{ k8s_auth_kubeconfig }}"
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: default
+
+- name: Create HF token secret when provided
+  kubernetes.core.k8s:
+    kubeconfig: "{{ k8s_auth_kubeconfig }}"
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: hf-token
+        namespace: default
+      type: Opaque
+      stringData:
+        token: "{{ hostvars[inventory_hostname].hf_token }}"
+  when: (hostvars[inventory_hostname].hf_token | default('') | trim) | length > 0
+
+- name: Ensure vLLM cache PVC (Longhorn RWX) exists
+  kubernetes.core.k8s:
+    kubeconfig: "{{ k8s_auth_kubeconfig }}"
+    state: present
+    definition:
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: vllm-cache
+        namespace: default
+      spec:
+        accessModes: [ "ReadWriteMany" ]
+        resources:
+          requests:
+            storage: "{{ vllm_cache_size | default('2000Gi') }}"
+        storageClassName: longhorn
+
+- name: Apply RayCluster manifest
+  kubernetes.core.k8s:
+    kubeconfig: "{{ k8s_auth_kubeconfig }}"
+    state: present
+    template: "{{ role_path }}/templates/raycluster.yaml.j2"
+    apply: true
+
+- name: Wait for Ray head pod Ready
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: default
+    label_selectors:
+      - ray.io/node-type=head
+    kubeconfig: "{{ k8s_auth_kubeconfig }}"
+    wait: true
+    wait_sleep: 10
+    wait_timeout: 1200
+    wait_condition:
+      type: Ready
+      status: "True"
+
+- name: Apply RayJob (vLLM serve) manifest
+  kubernetes.core.k8s:
+    kubeconfig: "{{ k8s_auth_kubeconfig }}"
+    state: present
+    template: "{{ role_path }}/templates/rayjob.yaml.j2"
+    apply: true
+
+- name: Apply vLLM Service manifest
+  kubernetes.core.k8s:
+    kubeconfig: "{{ k8s_auth_kubeconfig }}"
+    state: present
+    src: "{{ role_path }}/files/vllm-svc.yaml"
+    apply: yes
+
+- name: Wait for vLLM pod Ready
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: default
+    label_selectors:
+      - ray.io/node-type=head
+      - app=vllm
+    kubeconfig: "{{ k8s_auth_kubeconfig }}"
+    wait: true
+    wait_sleep: 10
+    wait_timeout: 1800
+    wait_condition:
+      type: Ready
+      status: "True"

@@ -1,5 +1,7 @@
 defaultSettings:
   defaultDataPath: "/srv/longhorn"
+  nodeSelector:
+    {{ longhorn_node_selector_key | default('longhorn.io/enable') }}: "{{ longhorn_node_selector_value | default('true') }}"
 preUpgradeChecker:
   jobEnabled: false
 service:
@@ -13,3 +15,11 @@ ingress:
     - path: "/"
       pathType: "Prefix"
   tls: []
+
+longhornManager:
+  nodeSelector:
+    {{ longhorn_node_selector_key | default('longhorn.io/enable') }}: "{{ longhorn_node_selector_value | default('true') }}"
+
+longhornDriver:
+  nodeSelector:
+    {{ longhorn_node_selector_key | default('longhorn.io/enable') }}: "{{ longhorn_node_selector_value | default('true') }}"

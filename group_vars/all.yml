@@ -1,4 +1,5 @@
 helm_version: v3.15.2
+k8s_auth_kubeconfig: "{{ lookup('env', 'KUBECONFIG') | default(playbook_dir + '/kubeconfig', true) }}"
 
 # Traefik (via githubixx.traefik_kubernetes)
 traefik_namespace: traefik
@@ -13,3 +14,16 @@ models:
     hf_id: "openai/gpt-oss-120b"
   - name: nemotron12b
     hf_id: "nvidia/NVIDIA-Nemotron-Nano-12B-v2"
+
+# vLLM defaults (can override per-inventory)
+vllm_model: "{{ models[0].hf_id }}"
+vllm_tensor_parallel_size: 1
+vllm_pipeline_parallel_size: 2
+vllm_gpu_memory_utilization: 0.9
+vllm_max_tokens: 8192
+vllm_cache_size: 2000Gi
+vllm_image: "vllm/vllm-openai:latest-cuda"
+
+# API endpoint used for kubeadm join (reachable from DGX workers); if unset, the
+# join_workers role will try to read terraform output k8s_api_endpoint or env var.
+k8s_api_endpoint: ""

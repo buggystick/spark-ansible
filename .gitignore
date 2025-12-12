@@ -5,3 +5,6 @@ terraform.tfstate
 terraform.tfvars
 plan.tfplan
 terraform.log
+kubeconfig-talos.yaml
+/kubeconfig
+/talosconfig

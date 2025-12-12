@@ -11,4 +11,4 @@ env:
   - name: WEBUI_NAME
     value: "DGX Sparks WebUI (PP=2)"
   - name: OPENAI_API_BASE_URLS
-    value: "http://openai-proxy.default.svc.cluster.local:8000/v1"
+    value: "http://vllm.default.svc.cluster.local:8000/v1"

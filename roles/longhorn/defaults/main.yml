@@ -21,3 +21,7 @@ longhorn_ingress_annotations: {}
 # Disable TLS by default. Provide a secret name to enable HTTPS termination.
 longhorn_ingress_tls_enabled: false
 longhorn_ingress_tls_secret: longhorn-tls
+
+# Constrain Longhorn data plane to labeled worker nodes.
+longhorn_node_selector_key: "longhorn.io/enable"
+longhorn_node_selector_value: "true"
